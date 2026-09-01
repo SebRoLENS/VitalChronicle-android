@@ -5,6 +5,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.animation.AnimatedVisibility
@@ -22,18 +23,14 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import java.time.LocalDate
 import kotlin.math.max
-import kotlin.math.min
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -77,13 +74,13 @@ enum class Screen(val label: String, val icon: ImageVector) {
         item {
             HeroCard(
                 title = if(vm.counts.isEmpty()) "Your health history, privately understood." else "${vm.counts.values.sum()} local health records",
-                subtitle = if(vm.vault.token()!=null) "Google connected · ${vm.status}" else "Import your Google OAuth JSON in Settings, then connect your account.",
+                subtitle = if(vm.googleConnected) "Google connected · ${vm.status}" else "Connect your Google account from Settings using native Android authorization.",
                 icon = Icons.Default.Favorite
             )
         }
         if(vm.metrics.isEmpty()) item { EmptyCard("No local measurements yet", "Connect Google and run a sync. Health records stay on this device.") }
         items(vm.metrics, key={it.dataType}) { MetricCardView(it) }
-        item { Button(onClick=vm::sync, enabled=!vm.busy && vm.vault.token()!=null, modifier=Modifier.fillMaxWidth()) { Icon(Icons.Default.Sync,null); Spacer(Modifier.width(8.dp)); Text("Download / update") } }
+        item { Button(onClick=vm::sync, enabled=!vm.busy && vm.googleConnected, modifier=Modifier.fillMaxWidth()) { Icon(Icons.Default.Sync,null); Spacer(Modifier.width(8.dp)); Text("Download / update") } }
     }
 }
 
@@ -138,18 +135,26 @@ enum class Screen(val label: String, val icon: ImageVector) {
 }
 
 @Composable fun SettingsScreen(vm: VitalViewModel) {
-    val context=LocalContext.current; val activity=context as Activity
-    val credentialLauncher=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if(uri!=null) runCatching { context.contentResolver.openInputStream(uri)?.bufferedReader()?.use{it.readText()} ?: error("Could not read file") }.onSuccess(vm::importCredentials)
+    val authorizationLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) vm.completeGoogleAuthorization(result.data)
+        else vm.googleAuthorizationCancelled()
     }
+
     LazyColumn(Modifier.fillMaxSize(), contentPadding=PaddingValues(16.dp), verticalArrangement=Arrangement.spacedBy(14.dp)) {
-        item { SectionTitle("Google Health", "The same OAuth client JSON used by VitalChronicle desktop can be imported. Credentials and tokens are encrypted with Android Keystore.") }
-        item { SettingCard(Icons.Default.Key,"OAuth credentials",if(vm.vault.credentials()!=null) "Configured" else "Not configured") {
-            OutlinedButton(onClick={credentialLauncher.launch(arrayOf("application/json","text/json","text/plain"))}) { Text("Import JSON") }
-        } }
-        item { SettingCard(Icons.Default.AccountCircle,"Google account",if(vm.vault.token()!=null) "Connected" else "Not connected") {
-            if(vm.vault.token()==null) Button(onClick={vm.connectGoogle(activity)},enabled=!vm.busy && vm.vault.credentials()!=null){Text("Connect")}
-            else TextButton(onClick=vm::disconnectGoogle){Text("Disconnect")}
+        item { SectionTitle("Google Health", "Android uses Google Identity Services directly. No OAuth client secret, browser callback or localhost server is stored in the app.") }
+        item {
+            Card { Column(Modifier.padding(16.dp), verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment=Alignment.CenterVertically) { Icon(Icons.Default.VerifiedUser,null,tint=MaterialTheme.colorScheme.primary); Spacer(Modifier.width(10.dp)); Text("Android OAuth client configuration",fontWeight=FontWeight.SemiBold) }
+                Text("In Google Cloud, create an OAuth client of type Android for the package and SHA-1 below. Android Studio debug builds and production-signed builds have different SHA-1 fingerprints, so register each signing certificate you use.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                SelectionContainer { Text("Package: ${vm.googlePackageName}\nSHA-1: ${vm.googleSigningSha1}",style=MaterialTheme.typography.bodySmall,fontWeight=FontWeight.Medium) }
+            } }
+        }
+        item { SettingCard(Icons.Default.AccountCircle,"Google account",if(vm.googleConnected) "Connected with Google Identity Services" else "Not connected") {
+            if(!vm.googleConnected) Button(
+                onClick={ vm.connectGoogle { pending -> authorizationLauncher.launch(IntentSenderRequest.Builder(pending).build()) } },
+                enabled=!vm.busy
+            ){Text("Connect")}
+            else TextButton(onClick=vm::disconnectGoogle,enabled=!vm.busy){Text("Disconnect")}
         } }
         item { SettingCard(Icons.Default.Sync,"Sync history","Up to ${DataRetention.GENERAL_DAYS} days; high-frequency cardiac streams keep ${DataRetention.HIGH_VOLUME_CARDIAC_DAYS} days") { Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){ listOf(30,90).forEach{d->FilterChip(selected=vm.historyDays==d,onClick={vm.historyDays=d},label={Text("${d}d")})} } } }
 
