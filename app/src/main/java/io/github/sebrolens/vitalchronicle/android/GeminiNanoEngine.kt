@@ -2,29 +2,19 @@ package io.github.sebrolens.vitalchronicle.android
 
 import com.google.mlkit.genai.common.DownloadStatus
 import com.google.mlkit.genai.prompt.Generation
-import com.google.mlkit.genai.prompt.ModelPreference
 import com.google.mlkit.genai.prompt.SystemInstruction
 import com.google.mlkit.genai.prompt.TextPart
 import com.google.mlkit.genai.prompt.generateContentRequest
 import com.google.mlkit.genai.prompt.generationConfig
-import com.google.mlkit.genai.prompt.modelConfig
 import kotlinx.coroutines.flow.collect
 import org.json.JSONObject
 
 class GeminiNanoEngine {
-    // VitalChronicle performs the scientific/statistical work before the language
-    // model runs. Prefer the latency-optimised on-device model variant: Nano only
-    // has to explain a small deterministic packet selected for the user's question.
-    private val model by lazy {
-        Generation.getClient(
-            generationConfig {
-                modelConfig = modelConfig {
-                    preference = ModelPreference.FAST
-                }
-            }
-        )
-    }
-    private var warmedUp = false
+    // Use the default Prompt API client. This is the same runtime path which worked
+    // reliably before the latency experiments. Question-aware deterministic retrieval
+    // already keeps Nano's task small, so a model preference must not make the feature
+    // unavailable on devices which expose only the default built-in model variant.
+    private val model by lazy { Generation.getClient(generationConfig {}) }
 
     suspend fun modelName(): String? = runCatching { model.getBaseModelName() }.getOrNull()
 
@@ -40,11 +30,6 @@ class GeminiNanoEngine {
                 is DownloadStatus.DownloadFailed -> throw status.e
             }
         }
-        if (!warmedUp) {
-            progress("Warming up Gemini Nano…")
-            model.warmup()
-            warmedUp = true
-        }
         return name
     }
 
@@ -53,6 +38,7 @@ class GeminiNanoEngine {
         val retrievalMode = runCatching {
             JSONObject(evidenceJson).optJSONObject("retrieval")?.optString("mode")
         }.getOrNull().orEmpty().ifBlank { "general" }
+
         val requestedOutputTokens = when (retrievalMode) {
             "specific_relation", "specific" -> 512
             "domain" -> 640
@@ -84,22 +70,29 @@ class GeminiNanoEngine {
         var maxOutputTokens = requestedOutputTokens
         var generationRequest = request(maxOutputTokens)
 
-        // ML Kit's tokenizer is authoritative. Count the complete request, including
-        // system instruction and question, not just the JSON packet estimate.
-        val inputTokens = model.countTokens(generationRequest).totalTokens
-        val tokenLimit = model.getTokenLimit()
-        val availableForOutput = tokenLimit - inputTokens
-        if (availableForOutput < 128) {
-            error("Gemini Nano prompt is too large: $inputTokens / $tokenLimit input tokens leave too little room for an answer.")
-        }
-        if (maxOutputTokens > availableForOutput) {
-            maxOutputTokens = availableForOutput.coerceAtLeast(128)
-            generationRequest = request(maxOutputTokens)
-        }
+        // Token telemetry is useful, but it is not required to run Nano. Some AICore/
+        // Prompt API combinations expose generation correctly while optional token
+        // introspection or warm-up calls fail. Never report Nano as unavailable merely
+        // because telemetry is unavailable.
+        val tokenTelemetry = runCatching {
+            val input = model.countTokens(generationRequest).totalTokens
+            val limit = model.getTokenLimit()
+            input to limit
+        }.getOrNull()
 
-        progress(
-            "$name · input $inputTokens / $tokenLimit tokens · output max $maxOutputTokens · $retrievalMode · analysing…"
-        )
+        if (tokenTelemetry != null) {
+            val (inputTokens, tokenLimit) = tokenTelemetry
+            val availableForOutput = tokenLimit - inputTokens
+            if (tokenLimit > 0 && availableForOutput >= 128 && maxOutputTokens > availableForOutput) {
+                maxOutputTokens = availableForOutput
+                generationRequest = request(maxOutputTokens)
+            }
+            progress(
+                "$name · input $inputTokens / $tokenLimit tokens · output max $maxOutputTokens · $retrievalMode · analysing…"
+            )
+        } else {
+            progress("$name · output max $maxOutputTokens · $retrievalMode · analysing…")
+        }
 
         val response = model.generateContent(generationRequest)
         val text = response.candidates.firstOrNull()?.text?.trim().orEmpty()
