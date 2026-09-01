@@ -58,7 +58,7 @@ enum class Screen(val label: String, val icon: ImageVector) {
 @Composable fun VitalApp(vm: VitalViewModel = viewModel()) {
     var screen by remember { mutableStateOf(Screen.Overview) }
     Scaffold(
-        topBar={ TopAppBar(title={ Column { Text("VitalChronicle", fontWeight=FontWeight.SemiBold); Text("Android · 0.1.0", style=MaterialTheme.typography.labelSmall) } }, actions={ if(vm.busy) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth=2.dp) }) },
+        topBar={ TopAppBar(title={ Column { Text("VitalChronicle", fontWeight=FontWeight.SemiBold); Text("Android · ${BuildConfig.VERSION_NAME}", style=MaterialTheme.typography.labelSmall) } }, actions={ if(vm.busy) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth=2.dp) }) },
         bottomBar={ NavigationBar { Screen.entries.forEach { item -> NavigationBarItem(selected=screen==item,onClick={screen=item},icon={Icon(item.icon,null)},label={Text(item.label)}) } } }
     ) { padding ->
         Box(Modifier.padding(padding).fillMaxSize()) {
@@ -168,7 +168,7 @@ enum class Screen(val label: String, val icon: ImageVector) {
                 Text("Gemini Nano availability is verified at runtime by ML Kit. Unsupported devices automatically retain deterministic analysis.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             } }
         } } }
-        item { SectionTitle("Privacy & shared core", "VitalChronicle Android 0.1 stores health records locally. Its deterministic metrics are executed from the same Python core as the desktop application.") }
+        item { SectionTitle("Privacy & shared core", "VitalChronicle Android ${BuildConfig.VERSION_NAME} stores health records locally. Its deterministic metrics are executed from the same Python core as the desktop application.") }
         item { OutlinedButton(onClick={vm.database.clearAll();vm.refresh()},modifier=Modifier.fillMaxWidth()) { Icon(Icons.Default.DeleteOutline,null); Spacer(Modifier.width(8.dp)); Text("Delete local health archive") } }
         vm.lastError?.let { item { ErrorCard(it) } }
     }
