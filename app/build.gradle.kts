@@ -17,8 +17,8 @@ android {
         applicationId = "io.github.sebrolens.vitalchronicle.android"
         minSdk = 26
         targetSdk = 36
-        versionCode = 16
-        versionName = "0.2.2"
+        versionCode = 17
+        versionName = "0.3.0"
         ndk {
             abiFilters += listOf("arm64-v8a")
         }
@@ -78,6 +78,7 @@ chaquopy {
 }
 
 dependencies {
+    implementation(project(":llamaAndroid"))
     // Compose 1.10 is the newest stable generation which remains compatible
     // with compileSdk 36 / AGP 8.x. Compose 1.12 requires SDK 37 and AGP 9.
     val composeBom = platform("androidx.compose:compose-bom:2025.12.00")

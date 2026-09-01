@@ -19,6 +19,8 @@ jobs:
     steps:
       - name: Checkout Android repository
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Checkout canonical VitalChronicle core
         uses: actions/checkout@v4
@@ -40,7 +42,7 @@ jobs:
       - uses: android-actions/setup-android@v3
 
       - name: Install Android SDK packages
-        run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0'
+        run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0' 'ndk;29.0.13113456' 'cmake;3.31.6'
 
       - name: Sync canonical shared core
         run: >-
@@ -97,6 +99,8 @@ jobs:
     steps:
       - name: Checkout Android repository
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Checkout canonical VitalChronicle core
         uses: actions/checkout@v4
@@ -118,7 +122,7 @@ jobs:
       - uses: android-actions/setup-android@v3
 
       - name: Install Android SDK packages
-        run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0'
+        run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0' 'ndk;29.0.13113456' 'cmake;3.31.6'
 
       - name: Sync canonical shared core
         run: >-

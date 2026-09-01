@@ -36,7 +36,11 @@ Android Studio debug builds and production/release builds normally use different
 
 ## AI privacy
 
-Automatic AI uses Android's on-device Gemini Nano through ML Kit GenAI when supported. The **Accurate local** profile prefers the stable FULL model when AICore exposes it, falls back to the compatible default model, uses deterministic temperature and an expanded answer budget, and enables thinking only on future hardware that reports it as supported. Health evidence is prepared locally by the shared deterministic core. No cloud AI endpoint is used. On unsupported devices the deterministic evidence inspector remains functional.
+Version 0.3 adds downloadable Ollama models which run directly on the phone through the pinned official `llama.cpp` Android runtime. The app recommends a Qwen 3 size from the phone's RAM, CPU architecture and free storage, downloads the official Ollama GGUF layer with resumable progress, and verifies its exact size and SHA-256 digest before loading it. Thinking-capable models expose a separate live reasoning panel plus generated-token count and throughput while the final Markdown answer streams in.
+
+Automatic AI prefers the selected downloaded model. When none is installed, it uses Android's on-device Gemini Nano through ML Kit GenAI when supported. The **Accurate local** Nano profile prefers the stable FULL model when AICore exposes it, falls back to the compatible default model, uses deterministic temperature and an expanded answer budget. Health evidence is prepared locally by the shared deterministic core. No cloud AI endpoint is used; the Ollama registry is contacted only to download the model chosen by the user. On unsupported devices the deterministic evidence inspector remains functional.
+
+The on-device catalog currently provides the pinned Q4_K_M artifacts for `qwen3:0.6b`, `qwen3:1.7b`, `qwen3:4b` and `qwen3:8b`. Model files live in app-specific storage and can be paused, resumed, selected or deleted from Settings.
 
 ## Automatic updates
 

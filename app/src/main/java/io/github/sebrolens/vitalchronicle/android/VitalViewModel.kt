@@ -6,6 +6,7 @@ import android.app.ActivityManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -13,6 +14,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -28,6 +30,8 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
     private val oauth = GoogleAuthorizationManager(app, vault)
     private val syncer = GoogleHealthSync(database, core, oauth, http)
     private val nano = GeminiNanoEngine()
+    private val ollamaModels = OllamaModelManager(app, http)
+    private val ollama = OllamaOnDeviceEngine(app)
     val specs: List<DataTypeSpec> by lazy { core.specs() }
     private val googleScopes: Set<String> by lazy { specs.map { it.scope }.filter { it.isNotBlank() }.toSet() }
 
@@ -36,6 +40,11 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
     var status by mutableStateOf("Ready"); private set
     var busy by mutableStateOf(false); private set
     var aiAnswer by mutableStateOf(""); private set
+    var aiThinking by mutableStateOf(""); private set
+    var aiThinkingActive by mutableStateOf(false); private set
+    var aiGeneratedTokens by mutableStateOf(0); private set
+    var aiMaximumTokens by mutableStateOf(0); private set
+    var aiTokensPerSecond by mutableStateOf(0.0); private set
     var aiEngine by mutableStateOf(AiEngine.AUTOMATIC)
     var aiModelName by mutableStateOf<String?>(null); private set
     var googleConnected by mutableStateOf(vault.nativeGoogleConnected()); private set
@@ -49,6 +58,8 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
     var updateState by mutableStateOf<AppUpdateState>(AppUpdateState.Idle); private set
     var updatePromptDismissed by mutableStateOf(false); private set
     private var awaitingUpdateInstallPermission = false
+    private var modelDownloadJob: Job? = null
+    private var analysisJob: Job? = null
 
     val googlePackageName: String = app.packageName
     val googleSigningSha1: String = runCatching { GoogleAuthorizationManager.signingSha1(app) }
@@ -57,8 +68,23 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
     val hardware: HardwareProfile = run {
         val am = app.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         val info = ActivityManager.MemoryInfo().also(am::getMemoryInfo)
-        HardwareProfile((info.totalMem / 1_073_741_824.0).toInt(), Runtime.getRuntime().availableProcessors(), "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
+        HardwareProfile(
+            ramGb = ((info.totalMem + 536_870_912L) / 1_073_741_824L).toInt(),
+            cpuThreads = Runtime.getRuntime().availableProcessors(),
+            device = "${Build.MANUFACTURER} ${Build.MODEL}",
+            abi = Build.SUPPORTED_ABIS.firstOrNull().orEmpty().ifBlank { "unknown" },
+            freeStorageBytes = ollamaModels.freeStorageBytes(),
+            lowRamDevice = am.isLowRamDevice,
+        )
     }
+    val ollamaCatalog: List<OllamaModelSpec> = OllamaModelCatalog.models
+    val recommendedOllamaModel: OllamaModelSpec = OllamaModelCatalog.recommended(hardware)
+    var selectedOllamaModelId by mutableStateOf(
+        ollamaModels.selectedModelId()?.takeIf { id -> ollamaCatalog.any { it.id == id } }
+            ?: recommendedOllamaModel.id
+    ); private set
+    var ollamaModelStates by mutableStateOf(ollamaModels.states()); private set
+    var modelManagerMessage by mutableStateOf<String?>(null); private set
 
     init {
         viewModelScope.launch {
@@ -205,6 +231,80 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
         updatePromptDismissed = true
     }
 
+    fun downloadOllamaModel(modelId: String) {
+        val model = ollamaCatalog.firstOrNull { it.id == modelId } ?: return
+        if (modelDownloadJob?.isActive == true) return
+        modelManagerMessage = null
+        modelDownloadJob = viewModelScope.launch {
+            try {
+                val file = ollamaModels.download(model) { downloadState ->
+                    viewModelScope.launch {
+                        ollamaModelStates = ollamaModelStates + (model.id to downloadState)
+                    }
+                }
+                ollamaModels.select(model)
+                selectedOllamaModelId = model.id
+                ollamaModelStates = ollamaModels.states()
+                aiModelName = "${model.id} · on-device llama.cpp"
+                modelManagerMessage = "${model.id} downloaded, verified and selected."
+                require(file.length() == model.downloadBytes)
+            } catch (e: CancellationException) {
+                ollamaModelStates = ollamaModels.states()
+                modelManagerMessage = "${model.id} download paused. Resume it whenever you are ready."
+            } catch (e: Exception) {
+                ollamaModelStates = ollamaModelStates + (
+                    model.id to OllamaInstallState.Failed(
+                        e.message ?: e.javaClass.simpleName,
+                        (ollamaModels.state(model) as? OllamaInstallState.Paused)?.downloadedBytes ?: 0L,
+                        model.downloadBytes,
+                    )
+                )
+                modelManagerMessage = e.message ?: "Unable to download ${model.id}."
+            }
+        }
+    }
+
+    fun cancelOllamaDownload(modelId: String) {
+        val state = ollamaModelStates[modelId]
+        if (state is OllamaInstallState.Downloading || state is OllamaInstallState.Verifying) {
+            modelDownloadJob?.cancel()
+        }
+    }
+
+    fun selectOllamaModel(modelId: String) {
+        val model = ollamaCatalog.firstOrNull { it.id == modelId } ?: return
+        try {
+            ollamaModels.select(model)
+            selectedOllamaModelId = model.id
+            aiModelName = "${model.id} · on-device llama.cpp"
+            modelManagerMessage = "${model.id} selected for local analysis."
+        } catch (e: Exception) {
+            modelManagerMessage = e.message
+        }
+    }
+
+    fun deleteOllamaModel(modelId: String) {
+        val model = ollamaCatalog.firstOrNull { it.id == modelId } ?: return
+        if (busy || modelDownloadJob?.isActive == true) {
+            modelManagerMessage = "Stop the active analysis or download before deleting a model."
+            return
+        }
+        viewModelScope.launch {
+            try {
+                ollama.unload()
+                withContext(Dispatchers.IO) { ollamaModels.delete(model) }
+                ollamaModelStates = ollamaModels.states()
+                if (selectedOllamaModelId == model.id) {
+                    selectedOllamaModelId = recommendedOllamaModel.id
+                }
+                modelManagerMessage = "${model.id} removed from this device."
+                probeAi()
+            } catch (e: Exception) {
+                modelManagerMessage = e.message ?: "Unable to remove ${model.id}."
+            }
+        }
+    }
+
     fun sync() {
         launchBusy("Starting Google Health sync…") {
             syncer.sync(historyDays) { status = it }
@@ -214,7 +314,8 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
 
     fun analyse(question: String) {
         if (question.isBlank()) return
-        launchBusy("Preparing deterministic evidence…") {
+        resetStreamingAnswer()
+        analysisJob = launchBusy("Preparing deterministic evidence…") {
             val today = LocalDate.now()
             val start = today.minusDays((analysisDays - 1).toLong()).toString()
             val end = today.plusDays(1).toString()
@@ -230,33 +331,97 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
                     status = "Deterministic analysis complete"
                 }
 
-                AiEngine.AUTOMATIC, AiEngine.GEMINI_NANO -> {
-                    // Keep the rich deterministic snapshot inside Python. Android receives
-                    // only the evidence selected for this exact question, rather than a
-                    // generic multi-domain JSON packet which Nano must search itself.
+                AiEngine.OLLAMA_LOCAL, AiEngine.AUTOMATIC, AiEngine.GEMINI_NANO -> {
                     status = "Selecting deterministic evidence relevant to your question…"
                     val modelEvidence = withContext(Dispatchers.Default) {
                         core.nanoEvidenceFromDatabase(databasePath, start, end, question)
                     }
-                    try {
-                        val result = nano.answer(question, modelEvidence) { status = it }
-                        aiAnswer = result.answer
-                        aiModelName = result.model
-                        status = "Analysis complete · ${result.engine}"
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: LinkageError) {
-                        useDeterministicFallback(e, databasePath, start, end)
-                    } catch (e: Exception) {
-                        useDeterministicFallback(e, databasePath, start, end)
+
+                    val selectedModel = ollamaCatalog.first { it.id == selectedOllamaModelId }
+                    val installedModel = ollamaModels.installedFile(selectedModel)
+                    val useDownloadedModel = aiEngine == AiEngine.OLLAMA_LOCAL ||
+                        (aiEngine == AiEngine.AUTOMATIC && installedModel != null)
+
+                    if (useDownloadedModel) {
+                        if (installedModel == null) {
+                            error("Download and select an Ollama model from Settings before using this engine.")
+                        }
+                        try {
+                            analyseWithOllama(selectedModel, installedModel, question, modelEvidence)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Throwable) {
+                            if (e is VirtualMachineError || e is ThreadDeath) throw e
+                            if (aiEngine == AiEngine.OLLAMA_LOCAL) throw e
+                            status = "Downloaded model unavailable · trying Gemini Nano…"
+                            analyseWithNanoOrFallback(e, question, modelEvidence, databasePath, start, end)
+                        }
+                    } else {
+                        analyseWithNanoOrFallback(null, question, modelEvidence, databasePath, start, end)
                     }
                 }
             }
         }
     }
 
+    fun cancelAnalysis() {
+        analysisJob?.cancel()
+    }
+
+    private suspend fun analyseWithOllama(
+        model: OllamaModelSpec,
+        modelFile: File,
+        question: String,
+        evidence: String,
+    ) {
+        val maximumTokens = if (model.parameterCount == "0.6B") 768 else 1024
+        aiMaximumTokens = maximumTokens
+        aiModelName = "${model.id} · on-device llama.cpp"
+        ollama.answer(
+            model = model,
+            modelFile = modelFile,
+            question = question,
+            evidenceJson = evidence,
+            maximumTokens = maximumTokens,
+            onStage = { status = it },
+            onSnapshot = { snapshot ->
+                aiThinking = snapshot.thinking
+                aiAnswer = snapshot.answer
+                aiThinkingActive = snapshot.thinkingActive
+                aiGeneratedTokens = snapshot.generatedTokens
+                aiMaximumTokens = snapshot.maximumTokens
+                aiTokensPerSecond = snapshot.tokensPerSecond
+            },
+        )
+        aiThinkingActive = false
+        status = "Analysis complete · ${model.id} · ${aiGeneratedTokens} tokens"
+    }
+
+    private suspend fun analyseWithNanoOrFallback(
+        ollamaFailure: Throwable?,
+        question: String,
+        evidence: String,
+        databasePath: String,
+        start: String,
+        end: String,
+    ) {
+        try {
+            val result = nano.answer(question, evidence) { status = it }
+            aiAnswer = result.answer
+            aiModelName = result.model
+            status = "Analysis complete · ${result.engine}"
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: LinkageError) {
+            useDeterministicFallback(e, ollamaFailure, databasePath, start, end)
+        } catch (e: Exception) {
+            useDeterministicFallback(e, ollamaFailure, databasePath, start, end)
+        }
+    }
+
     private suspend fun useDeterministicFallback(
         failure: Throwable,
+        earlierFailure: Throwable?,
         databasePath: String,
         start: String,
         end: String,
@@ -270,8 +435,19 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
             core.evidenceFromDatabase(databasePath, start, end)
         }
         aiAnswer = deterministicSummary(evidence) +
-            "\n\nGemini Nano is not available on this device/runtime: ${failure.message ?: failure.javaClass.simpleName}"
+            "\n\nLocal generative AI is not available: " +
+            listOfNotNull(earlierFailure, failure)
+                .joinToString("; ") { it.message ?: it.javaClass.simpleName }
         status = "Deterministic fallback used"
+    }
+
+    private fun resetStreamingAnswer() {
+        aiAnswer = ""
+        aiThinking = ""
+        aiThinkingActive = false
+        aiGeneratedTokens = 0
+        aiMaximumTokens = 0
+        aiTokensPerSecond = 0.0
     }
 
     private fun deterministicSummary(evidence: String): String {
@@ -293,15 +469,23 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun probeAi() {
+        val selected = ollamaCatalog.firstOrNull { it.id == selectedOllamaModelId }
+        if (selected != null && ollamaModels.installedFile(selected) != null) {
+            aiModelName = "${selected.id} · on-device llama.cpp"
+            return
+        }
         viewModelScope.launch { aiModelName = nano.modelName() }
     }
 
-    private fun launchBusy(initial: String, block: suspend () -> Unit) {
-        if (busy) return
-        viewModelScope.launch {
+    private fun launchBusy(initial: String, block: suspend () -> Unit): Job? {
+        if (busy) return null
+        return viewModelScope.launch {
             busy = true; status = initial; lastError = null
             try {
                 block()
+            } catch (e: CancellationException) {
+                status = "Operation stopped"
+                throw e
             } catch (e: LinkageError) {
                 lastError = "Incompatible Android AI runtime: ${e.message ?: e.javaClass.simpleName}"
                 status = "Error"
@@ -314,5 +498,10 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    override fun onCleared() { nano.close(); database.close(); super.onCleared() }
+    override fun onCleared() {
+        nano.close()
+        ollama.close()
+        database.close()
+        super.onCleared()
+    }
 }

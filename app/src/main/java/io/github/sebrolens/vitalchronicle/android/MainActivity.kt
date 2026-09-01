@@ -253,13 +253,72 @@ enum class Screen(val label: String, val icon: ImageVector) {
 
 @Composable fun AiScreen(vm: VitalViewModel) {
     var question by remember { mutableStateOf("What are the most meaningful patterns in my recent health data?") }
+    var thinkingOpen by remember { mutableStateOf(true) }
     LazyColumn(Modifier.fillMaxSize(), contentPadding=PaddingValues(16.dp), verticalArrangement=Arrangement.spacedBy(12.dp)) {
-        item { HeroCard("Private local AI", vm.aiModelName?.let{"Android built-in AI detected · $it"}?:"Automatic mode uses Gemini Nano when Android exposes it, otherwise deterministic evidence.", Icons.Default.AutoAwesome) }
+        item { HeroCard("Private local AI", vm.aiModelName?.let{"Active local model · $it"}?:"Download an Ollama model or use Android's built-in Gemini Nano. Health evidence stays on this device.", Icons.Default.AutoAwesome) }
         item { Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) { listOf(7,28,90).forEach { d -> FilterChip(selected=vm.analysisDays==d,onClick={vm.analysisDays=d},label={Text("${d}d")}) } } }
         item { OutlinedTextField(question,{question=it},label={Text("Ask about your data")},modifier=Modifier.fillMaxWidth(),minLines=3,maxLines=7) }
-        item { Button(onClick={vm.analyse(question)},enabled=!vm.busy && vm.counts.isNotEmpty(),modifier=Modifier.fillMaxWidth()) { Icon(Icons.Default.AutoAwesome,null); Spacer(Modifier.width(8.dp)); Text("Analyse locally") } }
-        if(vm.busy) item { Card { Row(Modifier.padding(14.dp), verticalAlignment=Alignment.CenterVertically) { CircularProgressIndicator(Modifier.size(24.dp),strokeWidth=2.dp); Spacer(Modifier.width(12.dp)); Column { Text("VitalChronicle is working",fontWeight=FontWeight.SemiBold); Text(vm.status,style=MaterialTheme.typography.bodySmall) } } } }
-        if(vm.aiAnswer.isNotBlank()) item { Card { SelectionContainer { MarkdownAnswer(vm.aiAnswer,Modifier.padding(16.dp)) } } }
+        item {
+            if (vm.busy) {
+                OutlinedButton(onClick=vm::cancelAnalysis,modifier=Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.Stop,null); Spacer(Modifier.width(8.dp)); Text("Stop analysis")
+                }
+            } else {
+                Button(onClick={vm.analyse(question)},enabled=vm.counts.isNotEmpty(),modifier=Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.AutoAwesome,null); Spacer(Modifier.width(8.dp)); Text("Analyse locally")
+                }
+            }
+        }
+        if(vm.busy) item {
+            Card { Row(Modifier.padding(14.dp), verticalAlignment=Alignment.CenterVertically) {
+                CircularProgressIndicator(Modifier.size(24.dp),strokeWidth=2.dp)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("VitalChronicle is working",fontWeight=FontWeight.SemiBold)
+                    Text(vm.status,style=MaterialTheme.typography.bodySmall)
+                }
+            } }
+        }
+        if(vm.aiGeneratedTokens > 0) item {
+            Card(colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.secondaryContainer)) {
+                Row(Modifier.fillMaxWidth().padding(horizontal=14.dp,vertical=10.dp),verticalAlignment=Alignment.CenterVertically) {
+                    Icon(Icons.Default.DataUsage,null,tint=MaterialTheme.colorScheme.secondary)
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("${vm.aiGeneratedTokens} / ${vm.aiMaximumTokens} output tokens",fontWeight=FontWeight.SemiBold)
+                        Text("${"%.1f".format(vm.aiTokensPerSecond)} tokens/s · counted live by llama.cpp",style=MaterialTheme.typography.bodySmall)
+                    }
+                    if(vm.aiThinkingActive) AssistChip(onClick={},label={Text("Thinking")},leadingIcon={Icon(Icons.Default.Psychology,null,Modifier.size(18.dp))})
+                }
+            }
+        }
+        if(vm.aiThinking.isNotBlank()) item {
+            Card {
+                Column {
+                    ListItem(
+                        headlineContent={Text("Model thinking",fontWeight=FontWeight.SemiBold)},
+                        supportingContent={Text(if(vm.aiThinkingActive) "Updating in real time" else "Reasoning completed")},
+                        leadingContent={Icon(Icons.Default.Psychology,null,tint=MaterialTheme.colorScheme.tertiary)},
+                        trailingContent={Icon(if(thinkingOpen) Icons.Default.ExpandLess else Icons.Default.ExpandMore,null)},
+                        modifier=Modifier.clickable{thinkingOpen=!thinkingOpen},
+                    )
+                    AnimatedVisibility(thinkingOpen) {
+                        SelectionContainer {
+                            MarkdownAnswer(vm.aiThinking,Modifier.padding(start=16.dp,end=16.dp,bottom=16.dp))
+                        }
+                    }
+                }
+            }
+        }
+        if(vm.aiAnswer.isNotBlank()) item {
+            Card { Column {
+                ListItem(
+                    headlineContent={Text("Answer",fontWeight=FontWeight.SemiBold)},
+                    leadingContent={Icon(Icons.Default.AutoAwesome,null,tint=MaterialTheme.colorScheme.primary)},
+                )
+                SelectionContainer { MarkdownAnswer(vm.aiAnswer,Modifier.padding(start=16.dp,end=16.dp,bottom=16.dp)) }
+            } }
+        }
         vm.lastError?.let { err -> item { ErrorCard(err) } }
     }
 }
@@ -361,20 +420,51 @@ enum class Screen(val label: String, val icon: ImageVector) {
         } }
         item { SettingCard(Icons.Default.Sync,"Sync history","Up to ${DataRetention.GENERAL_DAYS} days; high-frequency cardiac streams keep ${DataRetention.HIGH_VOLUME_CARDIAC_DAYS} days") { Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){ listOf(30,90).forEach{d->FilterChip(selected=vm.historyDays==d,onClick={vm.historyDays=d},label={Text("${d}d")})} } } }
 
-        item { SectionTitle("Local AI", "Automatic mode prefers Android's built-in Gemini Nano/AICore. No health data is sent to a cloud AI service.") }
+        item { SectionTitle("Local AI", "Automatic mode uses the selected downloaded Ollama model first, then Android's built-in Gemini Nano. No health data is sent to a cloud AI service.") }
         item { Card { Column(Modifier.padding(16.dp), verticalArrangement=Arrangement.spacedBy(10.dp)) {
             Text("AI engine",fontWeight=FontWeight.SemiBold)
             AiEngine.entries.forEach { engine -> Row(Modifier.fillMaxWidth().clickable{vm.aiEngine=engine}.padding(vertical=4.dp),verticalAlignment=Alignment.CenterVertically){ RadioButton(selected=vm.aiEngine==engine,onClick={vm.aiEngine=engine}); Column { Text(engine.title); if(engine==AiEngine.AUTOMATIC) Text("Recommended",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.primary) } } }
-            vm.aiModelName?.let { Text("Detected built-in model · $it",style=MaterialTheme.typography.bodySmall) }
-            Text("Quality profile · Accurate local (temperature 0.2, expanded answer budget, FULL model when available)",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            vm.aiModelName?.let { Text("Detected / selected model · $it",style=MaterialTheme.typography.bodySmall) }
+            Text("Ollama models stream thinking and output tokens through the bundled llama.cpp runtime. Gemini Nano keeps the Accurate local profile (temperature 0.2 and FULL model when available).",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
         } } }
+
+        item {
+            SectionTitle(
+                "Ollama models on this phone",
+                "Official Ollama GGUF layers run directly on-device through llama.cpp; no Ollama server or cloud inference is required.",
+            )
+        }
+        item {
+            Card(colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.primaryContainer)) {
+                Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(5.dp)) {
+                    Row(verticalAlignment=Alignment.CenterVertically) {
+                        Icon(Icons.Default.Recommend,null,tint=MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(9.dp))
+                        Text("Recommended · ${vm.recommendedOllamaModel.id}",fontWeight=FontWeight.Bold)
+                    }
+                    Text(
+                        "Chosen from ${vm.hardware.ramGb} GB RAM, ${vm.hardware.cpuThreads} CPU threads, ${vm.hardware.abi} and ${formatBytes(vm.hardware.freeStorageBytes)} free when VitalChronicle started.",
+                        style=MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+        }
+        items(vm.ollamaCatalog,key={it.id}) { model ->
+            OllamaModelCard(model,vm.ollamaModelStates[model.id] ?: OllamaInstallState.NotInstalled,vm)
+        }
+        vm.modelManagerMessage?.let { message -> item {
+            Card(colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.surfaceVariant)) {
+                Text(message,Modifier.padding(14.dp),style=MaterialTheme.typography.bodySmall)
+            }
+        } }
 
         item { Card { Column {
             ListItem(headlineContent={Text("Advanced settings")},supportingContent={Text("Hardware, analysis window and explicit engine override")},trailingContent={Icon(if(vm.advancedOpen) Icons.Default.ExpandLess else Icons.Default.ExpandMore,null)},modifier=Modifier.clickable{vm.advancedOpen=!vm.advancedOpen})
             AnimatedVisibility(vm.advancedOpen) { Column(Modifier.padding(start=16.dp,end=16.dp,bottom=16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
-                Text("${vm.hardware.device} · ${vm.hardware.ramGb} GB RAM exposed · ${vm.hardware.cpuThreads} CPU threads",style=MaterialTheme.typography.bodySmall)
+                Text("${vm.hardware.device} · ${vm.hardware.ramGb} GB RAM · ${vm.hardware.cpuThreads} CPU threads · ${vm.hardware.abi}",style=MaterialTheme.typography.bodySmall)
+                Text("Model storage available at launch · ${formatBytes(vm.hardware.freeStorageBytes)}${if(vm.hardware.lowRamDevice) " · Android low-RAM device" else ""}",style=MaterialTheme.typography.bodySmall)
                 Text("Analysis interval",fontWeight=FontWeight.Medium); Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){listOf(7,28,90).forEach{d->FilterChip(selected=vm.analysisDays==d,onClick={vm.analysisDays=d},label={Text("${d}d")})}}
-                Text("Gemini Nano availability is verified at runtime by ML Kit. Unsupported devices automatically retain deterministic analysis.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Ollama downloads are SHA-256 verified. Gemini Nano availability is verified at runtime by ML Kit. Unsupported runtimes retain deterministic analysis.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             } }
         } } }
         item {
