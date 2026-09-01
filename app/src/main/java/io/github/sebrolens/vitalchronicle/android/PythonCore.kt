@@ -4,6 +4,7 @@ import com.chaquo.python.Python
 
 class PythonCore {
     private val module by lazy { Python.getInstance().getModule("mobile_bridge") }
+    private val dashboardModule by lazy { Python.getInstance().getModule("android_dashboard") }
 
     fun specs(): List<DataTypeSpec> = parseSpecs(module.callAttr("data_type_specs").toString())
 
@@ -17,7 +18,7 @@ class PythonCore {
         module.callAttr("evidence", recordsJson, start, endExclusive).toString()
 
     fun dashboardFromDatabase(databasePath: String, referenceDay: String): String =
-        module.callAttr("dashboard_from_sqlite", databasePath, referenceDay).toString()
+        dashboardModule.callAttr("dashboard_from_sqlite", databasePath, referenceDay).toString()
 
     fun evidenceFromDatabase(databasePath: String, start: String, endExclusive: String): String =
         module.callAttr("evidence_from_sqlite", databasePath, start, endExclusive).toString()
