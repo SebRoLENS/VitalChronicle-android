@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse, json, shutil, subprocess
 from pathlib import Path
 
-CORE = ["__init__.py", "analysis.py", "ai_insights.py", "constants.py", "i18n.py", "utils.py"]
+CORE = ["__init__.py", "analysis.py", "ai_insights.py", "ai_pipeline.py", "constants.py", "i18n.py", "utils.py"]
 
 def main():
     p=argparse.ArgumentParser(); p.add_argument("--source",required=True); p.add_argument("--dest",required=True); p.add_argument("--assets",required=True); a=p.parse_args()
