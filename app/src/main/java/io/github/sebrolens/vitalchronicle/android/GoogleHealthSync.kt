@@ -6,6 +6,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
 import java.time.LocalDate
 import java.time.ZoneId
@@ -27,37 +28,48 @@ class GoogleHealthSync(
         val requestedHistory = historyDays.coerceIn(1, DataRetention.GENERAL_DAYS)
         var total = 0
 
-        // This runs before any network request. In particular, yesterday's raw
-        // heart-rate samples disappear as soon as the app is opened/synced on a
-        // new day, before today's heart-rate request is made.
         database.pruneRetention(today, compact = false)
 
         specs.forEachIndexed { index, spec ->
             progress("${index + 1}/${specs.size} · ${spec.label}")
             database.setSyncStatus(spec.key, "running")
             try {
+                if (spec.key == "heart-rate") {
+                    // Versions <= 0.3.1 stored raw intraday heart-rate samples.
+                    // Remove only those legacy rows once encountered; five-minute
+                    // rollups use a distinct record kind and remain available for
+                    // incremental updates and the full 15-day cardiac archive.
+                    database.deleteRecordsByKind("heart-rate", "data_point")
+                }
+
                 val retainedDays = DataRetention.requestedDays(spec.key, requestedHistory)
                 val initial = today.minusDays((retainedDays - 1).toLong())
-                val start = if (DataRetention.isCurrentDayOnly(spec.key)) {
-                    // Do not ask Google Health for historical raw heart-rate data at
-                    // all. The server-side filter is always today 00:00 -> tomorrow
-                    // 00:00, so only samples belonging to the current local day can
-                    // be returned.
-                    today
-                } else {
-                    val latest = database.latestStart(spec.key)?.take(10)?.let {
-                        runCatching { LocalDate.parse(it) }.getOrNull()
-                    }
-                    if (latest != null && latest.isAfter(initial)) latest.minusDays(1) else initial
+                val latest = database.latestStart(spec.key)?.take(10)?.let {
+                    runCatching { LocalDate.parse(it) }.getOrNull()
                 }
-                val pages = if (spec.operation == "daily_rollup") rollup(spec, start, today) else list(spec, start, today)
+                val start = if (latest != null && latest.isAfter(initial)) {
+                    latest.minusDays(1).coerceAtLeast(initial)
+                } else {
+                    initial
+                }
+
+                val pages = when {
+                    spec.key == "heart-rate" -> rollup(
+                        spec = spec,
+                        start = start,
+                        end = today,
+                        windowSize = "300s",
+                        recordKind = "five_minute_rollup",
+                    )
+                    spec.operation == "daily_rollup" -> rollup(spec, start, today)
+                    else -> list(spec, start, today)
+                }
                 total += pages
-                val retentionLabel = if (DataRetention.isCurrentDayOnly(spec.key)) {
-                    "today only"
-                } else {
-                    "${DataRetention.daysFor(spec.key)}d retention"
-                }
-                database.setSyncStatus(spec.key, "ok", "$pages records · $retentionLabel")
+                database.setSyncStatus(
+                    spec.key,
+                    "ok",
+                    "$pages records · ${DataRetention.daysFor(spec.key)}d retention",
+                )
             } catch (e: GoogleAuthorizationRequiredException) {
                 database.setSyncStatus(spec.key, "error", e.message.orEmpty())
                 throw e
@@ -86,16 +98,30 @@ class GoogleHealthSync(
                     token?.let { addQueryParameter("pageToken", it) }
                 }.build()
             val json = requestJson(Request.Builder().url(url).get().build())
-            val points = json.optJSONArray("dataPoints") ?: org.json.JSONArray()
-            if (points.length() > 0) count += database.upsertNormalized(core.normalize(spec.key, points.toString(), "data_point"))
+            val points = json.optJSONArray("dataPoints") ?: JSONArray()
+            if (points.length() > 0) {
+                count += database.upsertNormalized(
+                    core.normalize(spec.key, points.toString(), "data_point")
+                )
+            }
             token = json.optString("nextPageToken").takeIf { it.isNotBlank() }
-            if (token != null && !seen.add(token!!)) error("Google Health repeated a page token for ${spec.label}.")
+            if (token != null && !seen.add(token!!)) {
+                error("Google Health repeated a page token for ${spec.label}.")
+            }
         } while (token != null)
         return count
     }
 
-    private suspend fun rollup(spec: DataTypeSpec, start: LocalDate, end: LocalDate): Int {
-        val maxDays = if (spec.key in setOf("calories-in-heart-rate-zone", "heart-rate", "active-minutes", "total-calories")) 14 else 90
+    private suspend fun rollup(
+        spec: DataTypeSpec,
+        start: LocalDate,
+        end: LocalDate,
+        windowSize: String = "86400s",
+        recordKind: String = "daily_rollup",
+    ): Int {
+        val maxDays = if (
+            spec.key in setOf("calories-in-heart-rate-zone", "heart-rate", "active-minutes", "total-calories")
+        ) 14 else 90
         var cursor = start
         var count = 0
         val zone = ZoneId.systemDefault()
@@ -109,20 +135,65 @@ class GoogleHealthSync(
                         put("startTime", cursor.atStartOfDay(zone).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME))
                         put("endTime", exclusive.atStartOfDay(zone).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME))
                     })
-                    put("windowSize", "86400s"); put("pageSize", 10000)
+                    put("windowSize", windowSize)
+                    put("pageSize", 10000)
                     token?.let { put("pageToken", it) }
                 }
                 val url = "https://health.googleapis.com/v4/users/me/dataTypes/${spec.key}/dataPoints:rollUp"
-                val req = Request.Builder().url(url).post(body.toString().toRequestBody("application/json".toMediaType())).build()
+                val req = Request.Builder()
+                    .url(url)
+                    .post(body.toString().toRequestBody("application/json".toMediaType()))
+                    .build()
                 val json = requestJson(req)
-                val points = json.optJSONArray("rollupDataPoints") ?: org.json.JSONArray()
-                if (points.length() > 0) count += database.upsertNormalized(core.normalize(spec.key, points.toString(), "daily_rollup"))
+                val sourcePoints = json.optJSONArray("rollupDataPoints") ?: JSONArray()
+                val points = prepareRollupPoints(spec, sourcePoints, recordKind)
+                if (points.length() > 0) {
+                    count += database.upsertNormalized(
+                        core.normalize(spec.key, points.toString(), recordKind)
+                    )
+                }
                 token = json.optString("nextPageToken").takeIf { it.isNotBlank() }
-                if (token != null && !seen.add(token!!)) error("Repeated roll-up page for ${spec.label}.")
+                if (token != null && !seen.add(token!!)) {
+                    error("Repeated roll-up page for ${spec.label}.")
+                }
             } while (token != null)
             cursor = exclusive
         }
         return count
+    }
+
+    /**
+     * Keep Google's original rollup payload (including avg/min/max), while adding
+     * a compatibility beatsPerMinute value equal to the five-minute average.
+     * The shared VitalChronicle core can therefore consume the already-aggregated
+     * series without any Android-only fork of its heart-rate analysis logic.
+     *
+     * A deterministic synthetic name makes each time window replaceable in
+     * SQLite, so re-syncing today's still-changing windows never creates duplicates.
+     */
+    private fun prepareRollupPoints(
+        spec: DataTypeSpec,
+        source: JSONArray,
+        recordKind: String,
+    ): JSONArray {
+        if (spec.key != "heart-rate" || recordKind != "five_minute_rollup") return source
+        return JSONArray().apply {
+            for (i in 0 until source.length()) {
+                val point = JSONObject(source.getJSONObject(i).toString())
+                val heartRate = point.optJSONObject("heartRate")
+                val average = heartRate?.optDouble("beatsPerMinuteAvg", Double.NaN)
+                    ?.takeIf { it.isFinite() }
+                if (heartRate != null && average != null) {
+                    heartRate.put("beatsPerMinute", average)
+                }
+                val start = point.optString("startTime")
+                val end = point.optString("endTime")
+                if (start.isNotBlank() || end.isNotBlank()) {
+                    point.put("name", "heart-rate:5m:$start:$end")
+                }
+                put(point)
+            }
+        }
     }
 
     private fun dateFilter(spec: DataTypeSpec, start: LocalDate, end: LocalDate): String? {
@@ -131,13 +202,18 @@ class GoogleHealthSync(
         val lower: String
         val upper: String
         if (spec.recordType == "daily" || field.contains(".civil_")) {
-            lower = start.toString(); upper = exclusive.toString()
+            lower = start.toString()
+            upper = exclusive.toString()
         } else {
             val zone = ZoneId.systemDefault()
             lower = start.atStartOfDay(zone).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)
             upper = exclusive.atStartOfDay(zone).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)
         }
-        return if (spec.key == "electrocardiogram") "$field >= \"$lower\"" else "$field >= \"$lower\" AND $field < \"$upper\""
+        return if (spec.key == "electrocardiogram") {
+            "$field >= \"$lower\""
+        } else {
+            "$field >= \"$lower\" AND $field < \"$upper\""
+        }
     }
 
     private suspend fun requestJson(base: Request): JSONObject {
@@ -151,7 +227,9 @@ class GoogleHealthSync(
                     .build()
                 http.execute(req).use { response ->
                     val text = response.body?.string().orEmpty()
-                    if (response.isSuccessful) return if (text.isBlank()) JSONObject() else JSONObject(text)
+                    if (response.isSuccessful) {
+                        return if (text.isBlank()) JSONObject() else JSONObject(text)
+                    }
                     if (response.code == 401 && attempt < 2) {
                         oauth.clearCachedToken(access)
                         last = IllegalStateException("Google Health 401: access token rejected")
