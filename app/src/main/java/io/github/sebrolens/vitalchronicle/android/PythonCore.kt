@@ -15,4 +15,10 @@ class PythonCore {
 
     fun evidence(recordsJson: String, start: String, endExclusive: String): String =
         module.callAttr("evidence", recordsJson, start, endExclusive).toString()
+
+    fun dashboardFromDatabase(databasePath: String, referenceDay: String): String =
+        module.callAttr("dashboard_from_sqlite", databasePath, referenceDay).toString()
+
+    fun evidenceFromDatabase(databasePath: String, start: String, endExclusive: String): String =
+        module.callAttr("evidence_from_sqlite", databasePath, start, endExclusive).toString()
 }
