@@ -116,7 +116,7 @@ class GoogleAuthorizationManager(
                 signatures.first()
             } else {
                 @Suppress("DEPRECATION")
-                packageInfo.signatures.first()
+                requireNotNull(packageInfo.signatures).first()
             }
             return MessageDigest.getInstance("SHA-1")
                 .digest(signature.toByteArray())
