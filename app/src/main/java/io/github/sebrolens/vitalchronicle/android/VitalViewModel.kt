@@ -170,22 +170,35 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
                         aiAnswer = result.answer
                         aiModelName = result.model
                         status = "Analysis complete · ${result.engine}"
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: LinkageError) {
+                        useDeterministicFallback(e, databasePath, start, end)
                     } catch (e: Exception) {
-                        if (aiEngine == AiEngine.GEMINI_NANO) throw e
-
-                        // Automatic mode remains robust: only if Nano fails do we pay the
-                        // cost of materialising the rich deterministic snapshot in Kotlin.
-                        status = "Nano unavailable · preparing deterministic fallback…"
-                        val evidence = withContext(Dispatchers.Default) {
-                            core.evidenceFromDatabase(databasePath, start, end)
-                        }
-                        aiAnswer = deterministicSummary(evidence) +
-                            "\n\nGemini Nano is not available on this device/runtime: ${e.message ?: "unknown error"}"
-                        status = "Deterministic fallback used"
+                        useDeterministicFallback(e, databasePath, start, end)
                     }
                 }
             }
         }
+    }
+
+    private suspend fun useDeterministicFallback(
+        failure: Throwable,
+        databasePath: String,
+        start: String,
+        end: String,
+    ) {
+        if (aiEngine == AiEngine.GEMINI_NANO) throw failure
+
+        // Automatic mode remains robust even for binary-linkage failures in a
+        // third-party AI runtime. Fatal VM errors are deliberately not swallowed.
+        status = "Nano unavailable · preparing deterministic fallback…"
+        val evidence = withContext(Dispatchers.Default) {
+            core.evidenceFromDatabase(databasePath, start, end)
+        }
+        aiAnswer = deterministicSummary(evidence) +
+            "\n\nGemini Nano is not available on this device/runtime: ${failure.message ?: failure.javaClass.simpleName}"
+        status = "Deterministic fallback used"
     }
 
     private fun deterministicSummary(evidence: String): String {
@@ -214,8 +227,17 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
         if (busy) return
         viewModelScope.launch {
             busy = true; status = initial; lastError = null
-            try { block() } catch (e: Exception) { lastError = e.message ?: e.javaClass.simpleName; status = "Error" }
-            finally { busy = false }
+            try {
+                block()
+            } catch (e: LinkageError) {
+                lastError = "Incompatible Android AI runtime: ${e.message ?: e.javaClass.simpleName}"
+                status = "Error"
+            } catch (e: Exception) {
+                lastError = e.message ?: e.javaClass.simpleName
+                status = "Error"
+            } finally {
+                busy = false
+            }
         }
     }
 

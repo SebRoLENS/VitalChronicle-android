@@ -1,6 +1,7 @@
 package io.github.sebrolens.vitalchronicle.android
 
 import com.google.mlkit.genai.common.DownloadStatus
+import com.google.mlkit.genai.common.FeatureStatus
 import com.google.mlkit.genai.prompt.Generation
 import com.google.mlkit.genai.prompt.SystemInstruction
 import com.google.mlkit.genai.prompt.TextPart
@@ -16,20 +17,30 @@ class GeminiNanoEngine {
     // unavailable on devices which expose only the default built-in model variant.
     private val model by lazy { Generation.getClient(generationConfig {}) }
 
-    suspend fun modelName(): String? = runCatching { model.getBaseModelName() }.getOrNull()
+    suspend fun modelName(): String? = runCatching {
+        if (model.checkStatus() == FeatureStatus.AVAILABLE) model.getBaseModelName() else null
+    }.getOrNull()
 
     suspend fun prepare(progress: (String) -> Unit): String {
         progress("Checking Android built-in AI…")
-        val name = model.getBaseModelName()
-        progress("Preparing $name…")
-        model.download().collect { status ->
-            when (status) {
-                is DownloadStatus.DownloadStarted -> progress("Preparing Gemini Nano model…")
-                is DownloadStatus.DownloadProgress -> progress("Downloading Android AI components…")
-                is DownloadStatus.DownloadCompleted -> progress("Gemini Nano ready")
-                is DownloadStatus.DownloadFailed -> throw status.e
+        when (val featureStatus = model.checkStatus()) {
+            FeatureStatus.AVAILABLE -> progress("Gemini Nano ready")
+            FeatureStatus.DOWNLOADABLE, FeatureStatus.DOWNLOADING -> {
+                progress("Preparing Gemini Nano model…")
+                model.download().collect { status ->
+                    when (status) {
+                        is DownloadStatus.DownloadStarted -> progress("Preparing Gemini Nano model…")
+                        is DownloadStatus.DownloadProgress -> progress("Downloading Android AI components…")
+                        is DownloadStatus.DownloadCompleted -> progress("Gemini Nano ready")
+                        is DownloadStatus.DownloadFailed -> throw status.e
+                    }
+                }
             }
+            FeatureStatus.UNAVAILABLE -> error("Gemini Nano is unavailable on this device or AICore configuration.")
+            else -> error("Unexpected Gemini Nano availability status: $featureStatus")
         }
+        val name = model.getBaseModelName()
+        progress("$name ready")
         return name
     }
 
