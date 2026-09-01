@@ -4,7 +4,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
@@ -16,7 +15,7 @@ class GoogleHealthSync(
     private val database: HealthDatabase,
     private val core: PythonCore,
     private val oauth: OAuthManager,
-    private val client: OkHttpClient = OkHttpClient(),
+    private val http: AndroidHttpClient,
 ) {
     suspend fun sync(historyDays: Int, progress: (String) -> Unit): Int = withContext(Dispatchers.IO) {
         val specs = core.specs().filter { it.autoSync }
@@ -34,7 +33,6 @@ class GoogleHealthSync(
                 database.setSyncStatus(spec.key, "ok", "$pages records")
             } catch (e: Exception) {
                 database.setSyncStatus(spec.key, "error", e.message.orEmpty())
-                // Isolate category failures like the desktop app.
             }
         }
         progress("Sync complete · $total records processed")
@@ -55,9 +53,7 @@ class GoogleHealthSync(
                 }.build()
             val json = requestJson(Request.Builder().url(url).get().build())
             val points = json.optJSONArray("dataPoints") ?: org.json.JSONArray()
-            if (points.length() > 0) {
-                count += database.upsertNormalized(core.normalize(spec.key, points.toString(), "data_point"))
-            }
+            if (points.length() > 0) count += database.upsertNormalized(core.normalize(spec.key, points.toString(), "data_point"))
             token = json.optString("nextPageToken").takeIf { it.isNotBlank() }
             if (token != null && !seen.add(token!!)) error("Google Health repeated a page token for ${spec.label}.")
         } while (token != null)
@@ -116,14 +112,16 @@ class GoogleHealthSync(
             try {
                 val access = oauth.validAccessToken()
                 val req = base.newBuilder().header("Authorization", "Bearer $access").header("Accept", "application/json").build()
-                client.newCall(req).execute().use { response ->
+                http.execute(req).use { response ->
                     val text = response.body?.string().orEmpty()
                     if (response.isSuccessful) return if (text.isBlank()) JSONObject() else JSONObject(text)
-                    if (response.code in setOf(429, 500, 502, 503, 504) && attempt < 2) {
-                        delay((1L shl attempt) * 1000L)
-                    } else error("Google Health ${response.code}: $text")
+                    if (response.code in setOf(429, 500, 502, 503, 504) && attempt < 2) delay((1L shl attempt) * 1000L)
+                    else error("Google Health ${response.code}: $text")
                 }
-            } catch (e: Exception) { last = e; if (attempt < 2) delay((1L shl attempt) * 1000L) }
+            } catch (e: Exception) {
+                last = e
+                if (attempt < 2) delay((1L shl attempt) * 1000L)
+            }
         }
         throw last ?: IllegalStateException("Google Health request failed")
     }
