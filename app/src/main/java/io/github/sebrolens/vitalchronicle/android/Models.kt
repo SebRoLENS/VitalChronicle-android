@@ -31,9 +31,19 @@ data class MetricCard(
     val current: Double?,
     val baseline: Double?,
     val deltaPercent: Double?,
+    val percentage: Double?,
     val completion: Boolean,
     val valueDate: String,
+    val latestAvailable: Boolean,
     val sparkline: List<Double>,
+    val sparklineMean: Double?,
+    val sparklineStd: Double?,
+    val heartDaySmoothed: List<Double>,
+    val heartDayMean: Double?,
+    val heartDayMin: Double?,
+    val heartDayMax: Double?,
+    val heartDaySampleCount: Int,
+    val heartSmoothingMinutes: Int,
 )
 
 data class AiResult(val answer: String, val engine: String, val model: String?)
@@ -48,6 +58,23 @@ data class HardwareProfile(val ramGb: Int, val cpuThreads: Int, val device: Stri
 
 fun JSONObject.optNullableString(key: String): String? =
     if (has(key) && !isNull(key)) optString(key).takeIf { it.isNotBlank() } else null
+
+private fun JSONObject.optFiniteDouble(key: String): Double? =
+    optDouble(key, Double.NaN).takeIf { it.isFinite() }
+
+private fun JSONObject.seriesValues(key: String): List<Double> {
+    val series = optJSONArray(key) ?: return emptyList()
+    return buildList {
+        for (i in 0 until series.length()) {
+            val pair = series.optJSONArray(i)
+            val value = when {
+                pair != null && pair.length() >= 2 -> pair.optDouble(1, Double.NaN)
+                else -> series.optDouble(i, Double.NaN)
+            }
+            if (value.isFinite()) add(value)
+        }
+    }
+}
 
 fun parseSpecs(json: String): List<DataTypeSpec> {
     val a = JSONArray(json)
@@ -76,29 +103,27 @@ fun parseMetricCards(json: String): List<MetricCard> {
     return buildList {
         for (i in 0 until metrics.length()) {
             val o = metrics.getJSONObject(i)
-            val spark = o.optJSONArray("sparkline")
-            val values = buildList {
-                if (spark != null) {
-                    for (j in 0 until spark.length()) {
-                        val pair = spark.optJSONArray(j)
-                        if (pair != null && pair.length() >= 2) {
-                            val value = pair.optDouble(1, Double.NaN)
-                            if (value.isFinite()) add(value)
-                        }
-                    }
-                }
-            }
             add(
                 MetricCard(
                     dataType = o.optString("data_type"),
                     label = o.optString("label"),
                     unit = o.optString("unit"),
-                    current = o.optDouble("current", Double.NaN).takeIf { it.isFinite() },
-                    baseline = o.optDouble("baseline", Double.NaN).takeIf { it.isFinite() },
-                    deltaPercent = o.optDouble("delta_percent", Double.NaN).takeIf { it.isFinite() },
+                    current = o.optFiniteDouble("current"),
+                    baseline = o.optFiniteDouble("baseline"),
+                    deltaPercent = o.optFiniteDouble("delta_percent"),
+                    percentage = o.optFiniteDouble("percentage"),
                     completion = o.optBoolean("completion"),
                     valueDate = o.optString("value_date"),
-                    sparkline = values,
+                    latestAvailable = o.optBoolean("latest_available"),
+                    sparkline = o.seriesValues("sparkline"),
+                    sparklineMean = o.optFiniteDouble("sparkline_mean"),
+                    sparklineStd = o.optFiniteDouble("sparkline_std"),
+                    heartDaySmoothed = o.seriesValues("heart_day_smoothed"),
+                    heartDayMean = o.optFiniteDouble("heart_day_mean"),
+                    heartDayMin = o.optFiniteDouble("heart_day_min"),
+                    heartDayMax = o.optFiniteDouble("heart_day_max"),
+                    heartDaySampleCount = o.optInt("heart_day_sample_count", 0),
+                    heartSmoothingMinutes = o.optInt("heart_smoothing_minutes", 0),
                 )
             )
         }
