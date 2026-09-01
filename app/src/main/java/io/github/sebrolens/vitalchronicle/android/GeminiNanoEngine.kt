@@ -63,6 +63,7 @@ class GeminiNanoEngine {
             If relation_checks says not_calculated, explain its stated reason and paired-day count rather than guessing a correlation.
             Mention material coverage limitations and that an incomplete current day can bias cumulative metrics.
             Be concise, precise, and answer in the user's language.
+            Use light Markdown for readability: short headings when useful, **bold** key findings, and bullet lists. Do not use tables or fenced code blocks.
         """.trimIndent()
         val prompt = """
             QUESTION:
