@@ -9,11 +9,12 @@ import com.google.mlkit.genai.prompt.generateContentRequest
 import com.google.mlkit.genai.prompt.generationConfig
 import com.google.mlkit.genai.prompt.modelConfig
 import kotlinx.coroutines.flow.collect
+import org.json.JSONObject
 
 class GeminiNanoEngine {
-    // VitalChronicle already performs the scientific/statistical work before the
-    // language model runs. Prefer the latency-optimised on-device model variant:
-    // Nano's job here is interpretation and wording, not recomputing statistics.
+    // VitalChronicle performs the scientific/statistical work before the language
+    // model runs. Prefer the latency-optimised on-device model variant: Nano only
+    // has to explain a small deterministic packet selected for the user's question.
     private val model by lazy {
         Generation.getClient(
             generationConfig {
@@ -49,39 +50,58 @@ class GeminiNanoEngine {
 
     suspend fun answer(question: String, evidenceJson: String, progress: (String) -> Unit): AiResult {
         val name = prepare(progress)
+        val retrievalMode = runCatching {
+            JSONObject(evidenceJson).optJSONObject("retrieval")?.optString("mode")
+        }.getOrNull().orEmpty().ifBlank { "general" }
+        val requestedOutputTokens = when (retrievalMode) {
+            "specific_relation", "specific" -> 512
+            "domain" -> 640
+            else -> 768
+        }
+
         val system = """
-            You are the fully on-device analysis assistant inside VitalChronicle, a wellness-data explorer, not a medical device.
-            Use only the deterministic evidence supplied by VitalChronicle. Never invent missing measurements or treat missing data as zero.
-            State material data-coverage limitations near the start when the evidence marks the requested interval as partially observed.
-            Prefer sustained and multi-metric patterns over trivial day-to-day arithmetic. Distinguish association from causation.
-            Do not diagnose disease and do not replace professional medical advice. Be concise, precise, and use the user's language.
+            You are VitalChronicle's fully on-device explanation layer, not a medical device.
+            The evidence packet was selected deterministically for this exact question; use only that evidence and do not invent missing measurements.
+            Missing data are not zero. Association is not causation. An unreported association is not proof that no relationship exists.
+            If relation_checks says not_calculated, explain its stated reason and paired-day count rather than guessing a correlation.
+            Mention material coverage limitations and that an incomplete current day can bias cumulative metrics.
+            Be concise, precise, and answer in the user's language.
         """.trimIndent()
         val prompt = """
-            USER QUESTION:
+            QUESTION:
             $question
 
-            VITALCHRONICLE DETERMINISTIC EVIDENCE (local JSON):
+            DETERMINISTIC EVIDENCE:
             $evidenceJson
         """.trimIndent()
-        val request = generateContentRequest(SystemInstruction(system), TextPart(prompt)) {
-            // 2048 output tokens made short wellness answers unnecessarily slow on
-            // Nano v3. 768 is enough for a useful answer while bounding latency.
-            maxOutputTokens = 768
+
+        fun request(maxOutput: Int) = generateContentRequest(SystemInstruction(system), TextPart(prompt)) {
+            maxOutputTokens = maxOutput
             candidateCount = 1
             enableThinking = false
         }
 
-        // Use ML Kit's tokenizer rather than guessing from JSON length. This count
-        // includes the system instruction and wrapper, which the Python packet-size
-        // estimate intentionally cannot know about.
-        val inputTokens = model.countTokens(request).totalTokens
-        val tokenLimit = model.getTokenLimit()
-        if (inputTokens + 768 > tokenLimit) {
-            error("Gemini Nano prompt is too large: $inputTokens input tokens for a $tokenLimit-token model budget.")
-        }
-        progress("$name · $inputTokens input tokens · analysing…")
+        var maxOutputTokens = requestedOutputTokens
+        var generationRequest = request(maxOutputTokens)
 
-        val response = model.generateContent(request)
+        // ML Kit's tokenizer is authoritative. Count the complete request, including
+        // system instruction and question, not just the JSON packet estimate.
+        val inputTokens = model.countTokens(generationRequest).totalTokens
+        val tokenLimit = model.getTokenLimit()
+        val availableForOutput = tokenLimit - inputTokens
+        if (availableForOutput < 128) {
+            error("Gemini Nano prompt is too large: $inputTokens / $tokenLimit input tokens leave too little room for an answer.")
+        }
+        if (maxOutputTokens > availableForOutput) {
+            maxOutputTokens = availableForOutput.coerceAtLeast(128)
+            generationRequest = request(maxOutputTokens)
+        }
+
+        progress(
+            "$name · input $inputTokens / $tokenLimit tokens · output max $maxOutputTokens · $retrievalMode · analysing…"
+        )
+
+        val response = model.generateContent(generationRequest)
         val text = response.candidates.firstOrNull()?.text?.trim().orEmpty()
         if (text.isBlank()) error("Gemini Nano returned an empty answer.")
         return AiResult(text, "Gemini Nano · Android built-in AI", name)
