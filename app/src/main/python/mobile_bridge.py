@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Any
 
 from google_health_viewer.ai_insights import build_ai_ready_snapshot
+from google_health_viewer.ai_pipeline import ensure_compact_evidence
 from google_health_viewer.analysis import build_daily_progress_snapshot
 from google_health_viewer.constants import DATA_TYPES
 from google_health_viewer.utils import extract_source, extract_times
@@ -90,7 +91,7 @@ class SQLiteStore:
         for row in rows:
             try:
                 payload = json.loads(row["payload"])
-            except (TypeError, ValueError, json.JSONDecodeError):
+            except (TypeError, ValueError):
                 payload = {}
             result.append(
                 {
@@ -183,3 +184,9 @@ def evidence_from_sqlite(database_path: str, start: str, end: str) -> str:
         return json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"))
     finally:
         store.close()
+
+
+def compact_evidence(evidence_json: str) -> str:
+    snapshot = json.loads(evidence_json)
+    compact = ensure_compact_evidence(snapshot)
+    return json.dumps(compact, ensure_ascii=False, separators=(",", ":"))
