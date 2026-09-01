@@ -8,6 +8,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import java.io.File
 
 data class LocalGenerationSnapshot(
@@ -95,8 +96,10 @@ class OllamaOnDeviceEngine(context: Context) {
     private suspend fun awaitInitialState() {
         when (val state = engine.state.value) {
             InferenceEngine.State.Uninitialized, InferenceEngine.State.Initializing -> {
-                val ready = engine.state.first {
-                    it is InferenceEngine.State.Initialized || it is InferenceEngine.State.Error
+                val ready = withTimeout(NATIVE_INITIALIZATION_TIMEOUT_MS) {
+                    engine.state.first {
+                        it is InferenceEngine.State.Initialized || it is InferenceEngine.State.Error
+                    }
                 }
                 if (ready is InferenceEngine.State.Error) throw ready.exception
             }
@@ -158,6 +161,7 @@ class OllamaOnDeviceEngine(context: Context) {
         .replace(Regex("""<\|(?:im_start|im_end)\|>"""), "")
 
     companion object {
+        private const val NATIVE_INITIALIZATION_TIMEOUT_MS = 30_000L
         private val SYSTEM_PROMPT = """
             You are VitalChronicle's fully on-device health-data explanation layer, not a medical device.
             Answer the exact question first and use only the deterministic evidence supplied by the app.

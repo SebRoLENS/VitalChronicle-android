@@ -83,6 +83,7 @@ object OllamaModelCatalog {
     )
 
     fun recommended(hardware: HardwareProfile): OllamaModelSpec {
+        if (hardware.lowRamDevice) return models.first()
         val storageAllowance = hardware.freeStorageBytes - MODEL_STORAGE_RESERVE_BYTES
         return models.lastOrNull {
             hardware.ramGb >= it.minimumRamGb && storageAllowance >= it.downloadBytes
@@ -154,50 +155,53 @@ class OllamaModelManager(
             "Not enough free storage. ${formatBytes(requiredBytes)} is required including safety headroom."
         }
 
-        val request = Request.Builder()
-            .url(model.registryUrl)
-            .header("Accept", "application/octet-stream")
-            .apply { if (existingBytes > 0L) header("Range", "bytes=$existingBytes-") }
-            .build()
-
         try {
-            http.execute(request).use { response ->
-                if (!response.isSuccessful) error("Ollama registry returned HTTP ${response.code}.")
-                val append = existingBytes > 0L && response.code == 206
-                if (!append) {
-                    // Some CDNs do not honour Range. Restart safely and account for
-                    // the space which becomes available when the partial is truncated.
-                    require(freeStorageBytes() + existingBytes >= model.downloadBytes + DOWNLOAD_STORAGE_RESERVE_BYTES) {
-                        "Not enough free storage to restart this model download."
-                    }
-                    existingBytes = 0L
-                }
+            if (partial.length() != model.downloadBytes) {
+                val request = Request.Builder()
+                    .url(model.registryUrl)
+                    .header("Accept", "application/octet-stream")
+                    .header("User-Agent", "VitalChronicle-Android/${BuildConfig.VERSION_NAME}")
+                    .apply { if (existingBytes > 0L) header("Range", "bytes=$existingBytes-") }
+                    .build()
 
-                val body = response.body ?: error("Ollama registry returned an empty model body.")
-                FileOutputStream(partial, append).use { output ->
-                    body.byteStream().use { input ->
-                        val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
-                        var downloaded = existingBytes
-                        var lastPublishedAt = 0L
-                        onState(OllamaInstallState.Downloading(downloaded, model.downloadBytes))
-                        while (true) {
-                            coroutineContext.ensureActive()
-                            val count = input.read(buffer)
-                            if (count < 0) break
-                            output.write(buffer, 0, count)
-                            downloaded += count
-                            val now = System.nanoTime()
-                            if (now - lastPublishedAt >= PROGRESS_INTERVAL_NANOS || downloaded >= model.downloadBytes) {
-                                onState(
-                                    OllamaInstallState.Downloading(
-                                        downloaded.coerceAtMost(model.downloadBytes),
-                                        model.downloadBytes,
-                                    )
-                                )
-                                lastPublishedAt = now
-                            }
+                http.execute(request).use { response ->
+                    if (!response.isSuccessful) error("Ollama registry returned HTTP ${response.code}.")
+                    val append = existingBytes > 0L && response.code == 206
+                    if (!append) {
+                        // Some CDNs do not honour Range. Restart safely and account for
+                        // the space which becomes available when the partial is truncated.
+                        require(freeStorageBytes() + existingBytes >= model.downloadBytes + DOWNLOAD_STORAGE_RESERVE_BYTES) {
+                            "Not enough free storage to restart this model download."
                         }
-                        output.fd.sync()
+                        existingBytes = 0L
+                    }
+
+                    val body = response.body ?: error("Ollama registry returned an empty model body.")
+                    FileOutputStream(partial, append).use { output ->
+                        body.byteStream().use { input ->
+                            val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
+                            var downloaded = existingBytes
+                            var lastPublishedAt = 0L
+                            onState(OllamaInstallState.Downloading(downloaded, model.downloadBytes))
+                            while (true) {
+                                coroutineContext.ensureActive()
+                                val count = input.read(buffer)
+                                if (count < 0) break
+                                output.write(buffer, 0, count)
+                                downloaded += count
+                                val now = System.nanoTime()
+                                if (now - lastPublishedAt >= PROGRESS_INTERVAL_NANOS || downloaded >= model.downloadBytes) {
+                                    onState(
+                                        OllamaInstallState.Downloading(
+                                            downloaded.coerceAtMost(model.downloadBytes),
+                                            model.downloadBytes,
+                                        )
+                                    )
+                                    lastPublishedAt = now
+                                }
+                            }
+                            output.fd.sync()
+                        }
                     }
                 }
             }

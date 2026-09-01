@@ -39,7 +39,7 @@ fun OllamaModelCard(
 ) {
     val recommended = model.id == vm.recommendedOllamaModel.id
     val selected = model.id == vm.selectedOllamaModelId && state is OllamaInstallState.Installed
-    val hardwareFit = vm.hardware.ramGb >= model.minimumRamGb
+    val hardwareFit = !vm.hardware.lowRamDevice && vm.hardware.ramGb >= model.minimumRamGb
     val progress = when (state) {
         is OllamaInstallState.Downloading -> state.downloadedBytes.toFloat() / state.totalBytes
         is OllamaInstallState.Paused -> state.downloadedBytes.toFloat() / state.totalBytes

@@ -37,7 +37,7 @@ android {
 
     externalNativeBuild {
         cmake {
-            path = file("../third_party/llama.cpp/examples/llama.android/lib/src/main/cpp/CMakeLists.txt")
+            path = file("src/main/cpp/CMakeLists.txt")
             version = "3.31.6"
         }
     }

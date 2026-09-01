@@ -79,10 +79,16 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
     }
     val ollamaCatalog: List<OllamaModelSpec> = OllamaModelCatalog.models
     val recommendedOllamaModel: OllamaModelSpec = OllamaModelCatalog.recommended(hardware)
-    var selectedOllamaModelId by mutableStateOf(
-        ollamaModels.selectedModelId()?.takeIf { id -> ollamaCatalog.any { it.id == id } }
-            ?: recommendedOllamaModel.id
-    ); private set
+    var selectedOllamaModelId by mutableStateOf(run {
+        val persisted = ollamaModels.selectedModelId()
+        val persistedModel = ollamaCatalog.firstOrNull { it.id == persisted }
+        when {
+            persistedModel != null && ollamaModels.installedFile(persistedModel) != null -> persistedModel.id
+            else -> ollamaCatalog.lastOrNull {
+                hardware.ramGb >= it.minimumRamGb && ollamaModels.installedFile(it) != null
+            }?.id ?: recommendedOllamaModel.id
+        }
+    }); private set
     var ollamaModelStates by mutableStateOf(ollamaModels.states()); private set
     var modelManagerMessage by mutableStateOf<String?>(null); private set
 
@@ -295,7 +301,15 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
                 withContext(Dispatchers.IO) { ollamaModels.delete(model) }
                 ollamaModelStates = ollamaModels.states()
                 if (selectedOllamaModelId == model.id) {
-                    selectedOllamaModelId = recommendedOllamaModel.id
+                    val replacement = ollamaCatalog.lastOrNull {
+                        hardware.ramGb >= it.minimumRamGb && ollamaModels.installedFile(it) != null
+                    }
+                    if (replacement != null) {
+                        ollamaModels.select(replacement)
+                        selectedOllamaModelId = replacement.id
+                    } else {
+                        selectedOllamaModelId = recommendedOllamaModel.id
+                    }
                 }
                 modelManagerMessage = "${model.id} removed from this device."
                 probeAi()
