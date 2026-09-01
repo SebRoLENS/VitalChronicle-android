@@ -147,21 +147,23 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
             val end = today.plusDays(1).toString()
             val databasePath = withContext(Dispatchers.IO) { database.readableDatabase.path }
 
-            status = "Computing deterministic metrics directly from the local archive…"
-            val evidence = withContext(Dispatchers.Default) {
-                core.evidenceFromDatabase(databasePath, start, end)
-            }
-            status = "Deterministic evidence ready"
-
             when (aiEngine) {
                 AiEngine.DETERMINISTIC -> {
+                    status = "Computing deterministic metrics directly from the local archive…"
+                    val evidence = withContext(Dispatchers.Default) {
+                        core.evidenceFromDatabase(databasePath, start, end)
+                    }
                     aiAnswer = deterministicSummary(evidence)
                     status = "Deterministic analysis complete"
                 }
+
                 AiEngine.AUTOMATIC, AiEngine.GEMINI_NANO -> {
-                    status = "Compressing deterministic evidence for the on-device model…"
+                    // Keep the rich deterministic snapshot inside Python. Android receives
+                    // only the evidence selected for this exact question, rather than a
+                    // generic multi-domain JSON packet which Nano must search itself.
+                    status = "Selecting deterministic evidence relevant to your question…"
                     val modelEvidence = withContext(Dispatchers.Default) {
-                        core.compactEvidence(evidence)
+                        core.nanoEvidenceFromDatabase(databasePath, start, end, question)
                     }
                     try {
                         val result = nano.answer(question, modelEvidence) { status = it }
@@ -170,7 +172,15 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
                         status = "Analysis complete · ${result.engine}"
                     } catch (e: Exception) {
                         if (aiEngine == AiEngine.GEMINI_NANO) throw e
-                        aiAnswer = deterministicSummary(evidence) + "\n\nGemini Nano is not available on this device/runtime: ${e.message ?: "unknown error"}"
+
+                        // Automatic mode remains robust: only if Nano fails do we pay the
+                        // cost of materialising the rich deterministic snapshot in Kotlin.
+                        status = "Nano unavailable · preparing deterministic fallback…"
+                        val evidence = withContext(Dispatchers.Default) {
+                            core.evidenceFromDatabase(databasePath, start, end)
+                        }
+                        aiAnswer = deterministicSummary(evidence) +
+                            "\n\nGemini Nano is not available on this device/runtime: ${e.message ?: "unknown error"}"
                         status = "Deterministic fallback used"
                     }
                 }
