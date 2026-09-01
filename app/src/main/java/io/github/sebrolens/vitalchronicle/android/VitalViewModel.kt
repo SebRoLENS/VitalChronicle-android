@@ -99,6 +99,11 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun googleAuthorizationCancelled() {
+        lastError = "Google authorization was cancelled or could not be completed."
+        status = "Google authorization cancelled"
+    }
+
     fun disconnectGoogle() {
         launchBusy("Disconnecting Google account…") {
             oauth.disconnect(googleScopes)
