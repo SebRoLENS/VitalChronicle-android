@@ -1,5 +1,6 @@
 package io.github.sebrolens.vitalchronicle.android
 
+import android.app.Activity
 import android.app.Application
 import android.app.ActivityManager
 import android.app.PendingIntent
@@ -15,6 +16,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.io.File
 import java.time.LocalDate
 
 class VitalViewModel(app: Application) : AndroidViewModel(app) {
@@ -22,6 +24,7 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
     private val core = PythonCore()
     val vault = CredentialVault(app)
     private val http = AndroidHttpClient(app)
+    private val updater = GitHubAppUpdater(app, http)
     private val oauth = GoogleAuthorizationManager(app, vault)
     private val syncer = GoogleHealthSync(database, core, oauth, http)
     private val nano = GeminiNanoEngine()
@@ -43,6 +46,9 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
     var analysisDays by mutableStateOf(28)
     var advancedOpen by mutableStateOf(false)
     var lastError by mutableStateOf<String?>(null); private set
+    var updateState by mutableStateOf<AppUpdateState>(AppUpdateState.Idle); private set
+    var updatePromptDismissed by mutableStateOf(false); private set
+    private var awaitingUpdateInstallPermission = false
 
     val googlePackageName: String = app.packageName
     val googleSigningSha1: String = runCatching { GoogleAuthorizationManager.signingSha1(app) }
@@ -61,6 +67,7 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
             refresh()
         }
         probeAi()
+        checkForAppUpdate()
     }
 
     /**
@@ -130,6 +137,72 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
             googleConnected = false
             status = "Google account disconnected"
         }
+    }
+
+    fun checkForAppUpdate() {
+        if (updateState is AppUpdateState.Checking || updateState is AppUpdateState.Downloading) return
+        viewModelScope.launch {
+            updateState = AppUpdateState.Checking
+            try {
+                withContext(Dispatchers.IO) { updater.cleanupDownloadedApks() }
+                val update = updater.findUpdate(BuildConfig.VERSION_NAME)
+                if (update == null) {
+                    updateState = AppUpdateState.UpToDate
+                } else {
+                    updateState = AppUpdateState.Downloading(update.version)
+                    val apk = updater.downloadAndVerify(update)
+                    updateState = AppUpdateState.Ready(update, apk.absolutePath)
+                    updatePromptDismissed = false
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                updateState = AppUpdateState.Failed(
+                    e.message ?: "Unable to check for application updates."
+                )
+            }
+        }
+    }
+
+    fun dismissUpdatePrompt() {
+        updatePromptDismissed = true
+    }
+
+    fun installUpdate(activity: Activity) {
+        val ready = updateState as? AppUpdateState.Ready ?: return
+        try {
+            if (!updater.canInstallPackages()) {
+                awaitingUpdateInstallPermission = true
+                activity.startActivity(updater.unknownSourcesIntent())
+            } else {
+                launchUpdateInstaller(activity, ready)
+            }
+        } catch (e: Exception) {
+            updateState = AppUpdateState.Failed(
+                e.message ?: "Unable to open the Android package installer."
+            )
+        }
+    }
+
+    fun resumePendingUpdateInstallation(activity: Activity) {
+        if (!awaitingUpdateInstallPermission || !updater.canInstallPackages()) return
+        val ready = updateState as? AppUpdateState.Ready ?: run {
+            awaitingUpdateInstallPermission = false
+            return
+        }
+        try {
+            launchUpdateInstaller(activity, ready)
+        } catch (e: Exception) {
+            updateState = AppUpdateState.Failed(
+                e.message ?: "Unable to open the Android package installer."
+            )
+        }
+    }
+
+    private fun launchUpdateInstaller(activity: Activity, ready: AppUpdateState.Ready) {
+        activity.startActivity(updater.installationIntent(File(ready.apkPath)))
+        awaitingUpdateInstallPermission = false
+        updatePromptDismissed = true
     }
 
     fun sync() {

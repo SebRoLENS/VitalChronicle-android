@@ -8,6 +8,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.viewModels
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -36,10 +37,17 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlin.math.max
 
 class MainActivity : ComponentActivity() {
+    private val vm: VitalViewModel by viewModels()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        setContent { VitalTheme { VitalApp() } }
+        setContent { VitalTheme { VitalApp(vm) } }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        vm.resumePendingUpdateInstallation(this)
     }
 }
 
@@ -57,6 +65,32 @@ enum class Screen(val label: String, val icon: ImageVector) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun VitalApp(vm: VitalViewModel = viewModel()) {
     var screen by remember { mutableStateOf(Screen.Overview) }
+    val activity = LocalContext.current as? Activity
+    val readyUpdate = vm.updateState as? AppUpdateState.Ready
+
+    if (readyUpdate != null && !vm.updatePromptDismissed) {
+        AlertDialog(
+            onDismissRequest = vm::dismissUpdatePrompt,
+            icon = { Icon(Icons.Default.SystemUpdate, null) },
+            title = { Text("VitalChronicle ${readyUpdate.info.version} is ready") },
+            text = {
+                Text(
+                    "The signed update was downloaded from GitHub and verified. " +
+                        "Android will ask you to confirm installation. The temporary APK " +
+                        "is deleted automatically the next time VitalChronicle starts."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { activity?.let { vm.installUpdate(it) } },
+                    enabled = activity != null,
+                ) { Text("Install now") }
+            },
+            dismissButton = {
+                TextButton(onClick = vm::dismissUpdatePrompt) { Text("Later") }
+            },
+        )
+    }
     Scaffold(
         topBar={ TopAppBar(title={ Column { Text("VitalChronicle", fontWeight=FontWeight.SemiBold); Text("Android · ${BuildConfig.VERSION_NAME}", style=MaterialTheme.typography.labelSmall) } }, actions={ if(vm.busy) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth=2.dp) }) },
         bottomBar={ NavigationBar { Screen.entries.forEach { item -> NavigationBarItem(selected=screen==item,onClick={screen=item},icon={Icon(item.icon,null)},label={Text(item.label)}) } } }
@@ -232,6 +266,7 @@ enum class Screen(val label: String, val icon: ImageVector) {
 
 @Composable fun SettingsScreen(vm: VitalViewModel) {
     var googleSetupOpen by remember { mutableStateOf(!vm.googleConnected) }
+    val activity = LocalContext.current as? Activity
     val requiredScopes = remember(vm.specs) { vm.specs.map { it.scope }.filter { it.isNotBlank() }.distinct().sorted() }
     val authorizationLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK && result.data != null) vm.completeGoogleAuthorization(result.data)
@@ -331,6 +366,7 @@ enum class Screen(val label: String, val icon: ImageVector) {
             Text("AI engine",fontWeight=FontWeight.SemiBold)
             AiEngine.entries.forEach { engine -> Row(Modifier.fillMaxWidth().clickable{vm.aiEngine=engine}.padding(vertical=4.dp),verticalAlignment=Alignment.CenterVertically){ RadioButton(selected=vm.aiEngine==engine,onClick={vm.aiEngine=engine}); Column { Text(engine.title); if(engine==AiEngine.AUTOMATIC) Text("Recommended",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.primary) } } }
             vm.aiModelName?.let { Text("Detected built-in model · $it",style=MaterialTheme.typography.bodySmall) }
+            Text("Quality profile · Accurate local (temperature 0.2, expanded answer budget, FULL model when available)",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
         } } }
 
         item { Card { Column {
@@ -341,9 +377,55 @@ enum class Screen(val label: String, val icon: ImageVector) {
                 Text("Gemini Nano availability is verified at runtime by ML Kit. Unsupported devices automatically retain deterministic analysis.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             } }
         } } }
+        item {
+            SectionTitle(
+                "Application updates",
+                "VitalChronicle checks GitHub at launch, downloads a newer signed APK to private temporary storage and removes cached APKs automatically.",
+            )
+        }
+        item { AppUpdateCard(vm, activity) }
+
         item { SectionTitle("Privacy & shared core", "VitalChronicle Android ${BuildConfig.VERSION_NAME} stores health records locally. General history is limited to ${DataRetention.GENERAL_DAYS} days and high-frequency cardiac raw data to ${DataRetention.HIGH_VOLUME_CARDIAC_DAYS} days. Deterministic metrics use the same Python core as desktop.") }
         item { OutlinedButton(onClick={vm.database.clearAll();vm.refresh()},modifier=Modifier.fillMaxWidth()) { Icon(Icons.Default.DeleteOutline,null); Spacer(Modifier.width(8.dp)); Text("Delete local health archive") } }
         vm.lastError?.let { item { ErrorCard(it) } }
+    }
+}
+
+@Composable fun AppUpdateCard(vm: VitalViewModel, activity: Activity?) {
+    val state = vm.updateState
+    val detail = when (state) {
+        AppUpdateState.Idle -> "Waiting for the automatic check"
+        AppUpdateState.Checking -> "Checking the latest GitHub release…"
+        AppUpdateState.UpToDate -> "Version ${BuildConfig.VERSION_NAME} is up to date"
+        is AppUpdateState.Downloading -> "Downloading signed version ${state.version}…"
+        is AppUpdateState.Ready -> "Version ${state.info.version} is downloaded and verified"
+        is AppUpdateState.Failed -> state.message
+    }
+    Card {
+        ListItem(
+            headlineContent = { Text("Automatic GitHub updates", fontWeight = FontWeight.SemiBold) },
+            supportingContent = { Text(detail) },
+            leadingContent = {
+                Icon(
+                    Icons.Default.SystemUpdate,
+                    null,
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            },
+            trailingContent = {
+                when (state) {
+                    AppUpdateState.Checking, is AppUpdateState.Downloading ->
+                        CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                    is AppUpdateState.Ready ->
+                        Button(
+                            onClick = { activity?.let { vm.installUpdate(it) } },
+                            enabled = activity != null,
+                        ) { Text("Install") }
+                    else ->
+                        TextButton(onClick = vm::checkForAppUpdate) { Text("Check") }
+                }
+            },
+        )
     }
 }
 
