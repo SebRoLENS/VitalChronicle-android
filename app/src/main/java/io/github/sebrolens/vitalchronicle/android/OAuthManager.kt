@@ -6,19 +6,18 @@ import android.net.Uri
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.FormBody
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStreamReader
-import java.net.InetAddress
 import java.net.ServerSocket
-import java.net.URLDecoder
 import java.security.SecureRandom
 import java.util.Base64
-import java.util.concurrent.TimeUnit
 
-class OAuthManager(private val vault: CredentialVault, private val client: OkHttpClient = OkHttpClient()) {
+class OAuthManager(
+    private val vault: CredentialVault,
+    private val http: AndroidHttpClient,
+) {
     suspend fun authenticate(activity: Activity, scopes: Set<String>): OAuthToken = withContext(Dispatchers.IO) {
         val credentials = requireNotNull(vault.credentials()) { "Import the OAuth JSON first." }
         val stateBytes = ByteArray(24).also { SecureRandom().nextBytes(it) }
@@ -88,7 +87,7 @@ class OAuthManager(private val vault: CredentialVault, private val client: OkHtt
     }
 
     private fun executeJson(request: Request): JSONObject {
-        client.newCall(request).execute().use { response ->
+        http.execute(request).use { response ->
             val text = response.body?.string().orEmpty()
             if (!response.isSuccessful) error("Google OAuth ${response.code}: $text")
             return JSONObject(text)
