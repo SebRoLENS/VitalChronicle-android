@@ -36,7 +36,13 @@ Android Studio debug builds and production/release builds normally use different
 
 ## AI privacy
 
-Automatic AI uses Android's on-device Gemini Nano through ML Kit GenAI when supported. Health evidence is prepared locally by the shared deterministic core. No cloud AI endpoint is used. On unsupported devices the deterministic evidence inspector remains functional.
+Automatic AI uses Android's on-device Gemini Nano through ML Kit GenAI when supported. The **Accurate local** profile prefers the stable FULL model when AICore exposes it, falls back to the compatible default model, uses deterministic temperature and an expanded answer budget, and enables thinking only on future hardware that reports it as supported. Health evidence is prepared locally by the shared deterministic core. No cloud AI endpoint is used. On unsupported devices the deterministic evidence inspector remains functional.
+
+## Automatic updates
+
+From version 0.2.2 onward, VitalChronicle checks the latest GitHub Release at launch. When a newer version exists, the app downloads the canonical signed APK to its private cache, verifies the package name, version and signing certificate, and opens Android's package installer. Android always requires the user to confirm installation and may first require permission to install apps from this source.
+
+Downloaded update APKs never enter shared storage: stale and completed installer files are removed automatically from the private cache on the next app launch.
 
 ## Google Health
 
