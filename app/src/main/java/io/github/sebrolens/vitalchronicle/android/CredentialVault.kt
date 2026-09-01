@@ -11,6 +11,7 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
+/** Legacy desktop-style OAuth data kept only so upgrades can safely read old installs. */
 data class OAuthCredentials(val clientId: String, val clientSecret: String, val redirectUri: String)
 data class OAuthToken(val accessToken: String, val refreshToken: String?, val expiresAtEpoch: Long)
 
@@ -45,6 +46,12 @@ class CredentialVault(context: Context) {
         String(cipher.doFinal(body), Charsets.UTF_8)
     }.getOrNull()
 
+    fun setNativeGoogleConnected(connected: Boolean) =
+        prefs.edit().putBoolean("native_google_connected", connected).apply()
+
+    fun nativeGoogleConnected(): Boolean = prefs.getBoolean("native_google_connected", false)
+
+    // Legacy migration helpers. Native Android authorization no longer consumes these values.
     fun saveCredentials(c: OAuthCredentials) = prefs.edit().putString("credentials", encrypt(JSONObject().apply {
         put("client_id", c.clientId); put("client_secret", c.clientSecret); put("redirect_uri", c.redirectUri)
     }.toString())).apply()
@@ -67,6 +74,7 @@ class CredentialVault(context: Context) {
         }
     }
 
+    fun clearLegacyOAuth() = prefs.edit().remove("credentials").remove("token").apply()
     fun clearToken() = prefs.edit().remove("token").apply()
     fun clearAll() = prefs.edit().clear().apply()
 
