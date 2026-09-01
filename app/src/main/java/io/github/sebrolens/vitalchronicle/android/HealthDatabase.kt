@@ -6,6 +6,7 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import org.json.JSONArray
 import org.json.JSONObject
+import java.time.LocalDate
 import java.time.OffsetDateTime
 
 class HealthDatabase(context: Context) : SQLiteOpenHelper(context, "health_data.sqlite3", null, 1) {
@@ -59,6 +60,56 @@ class HealthDatabase(context: Context) : SQLiteOpenHelper(context, "health_data.
             db.endTransaction()
         }
         return n
+    }
+
+    /**
+     * Enforce the bounded local archive. Returns the number of deleted records.
+     * When compact=true, SQLite is vacuumed only if deletion freed a meaningful
+     * amount of space, so an existing oversized database can actually shrink.
+     */
+    @Synchronized
+    fun pruneRetention(today: LocalDate = LocalDate.now(), compact: Boolean = false): Int {
+        val db = writableDatabase
+        var removed = 0
+        db.beginTransaction()
+        try {
+            DataRetention.HIGH_VOLUME_CARDIAC_TYPES.forEach { dataType ->
+                removed += db.delete(
+                    "records",
+                    "data_type=? AND substr(COALESCE(start_time,end_time,updated_at),1,10) < ?",
+                    arrayOf(dataType, DataRetention.cutoffDate(dataType, today).toString()),
+                )
+            }
+
+            val highVolume = DataRetention.HIGH_VOLUME_CARDIAC_TYPES.toList()
+            val placeholders = highVolume.joinToString(",") { "?" }
+            val generalCutoff = today.minusDays((DataRetention.GENERAL_DAYS - 1).toLong()).toString()
+            removed += db.delete(
+                "records",
+                "data_type NOT IN ($placeholders) AND substr(COALESCE(start_time,end_time,updated_at),1,10) < ?",
+                (highVolume + generalCutoff).toTypedArray(),
+            )
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+
+        if (compact && removed > 0 && shouldVacuum(db)) {
+            runCatching { db.execSQL("VACUUM") }
+        }
+        return removed
+    }
+
+    private fun pragmaLong(db: SQLiteDatabase, pragma: String): Long =
+        db.rawQuery("PRAGMA $pragma", null).use { c -> if (c.moveToFirst()) c.getLong(0) else 0L }
+
+    private fun shouldVacuum(db: SQLiteDatabase): Boolean {
+        val pageCount = pragmaLong(db, "page_count")
+        val freePages = pragmaLong(db, "freelist_count")
+        val pageSize = pragmaLong(db, "page_size")
+        if (pageCount <= 0 || pageSize <= 0) return false
+        val freeBytes = freePages * pageSize
+        return freeBytes >= 16L * 1024L * 1024L && freePages * 5L >= pageCount
     }
 
     fun counts(): Map<String, Int> {
