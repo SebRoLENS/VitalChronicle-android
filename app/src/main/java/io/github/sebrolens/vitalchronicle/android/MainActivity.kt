@@ -84,7 +84,7 @@ enum class Screen(val label: String, val icon: ImageVector) {
         if(vm.metrics.isEmpty()) item {
             EmptyCard(
                 if(vm.counts.isEmpty()) "No local measurements yet" else "Building local summaries",
-                if(vm.counts.isEmpty()) "Connect Google and run a sync. Health records stay on this device." else "Your downloaded health records are stored locally. VitalChronicle is preparing a bounded summary dataset instead of loading the entire archive into memory."
+                if(vm.counts.isEmpty()) "Connect Google and run a sync. Health records stay on this device." else "Your downloaded health records are stored locally. VitalChronicle is preparing the same deterministic summaries used by desktop."
             )
         }
         vm.lastError?.let { err -> item { ErrorCard(err) } }
@@ -95,6 +95,7 @@ enum class Screen(val label: String, val icon: ImageVector) {
 
 @Composable fun MetricCardView(metric: MetricCard) {
     val color = metricColor(metric.dataType)
+    val isHeartToday = metric.dataType == "heart-rate-today"
     Card { Column(Modifier.padding(16.dp)) {
         Row(verticalAlignment=Alignment.CenterVertically) {
             Box(Modifier.size(10.dp).background(color, RoundedCornerShape(50)))
@@ -103,16 +104,100 @@ enum class Screen(val label: String, val icon: ImageVector) {
         }
         Spacer(Modifier.height(8.dp))
         Text(metric.current?.let { "${formatMetric(it)} ${metric.unit}" } ?: "—", style=MaterialTheme.typography.headlineMedium, fontWeight=FontWeight.Bold)
-        if(metric.sparkline.size>1) { Spacer(Modifier.height(10.dp)); Sparkline(metric.sparkline,color,Modifier.fillMaxWidth().height(54.dp)) }
+
+        if (isHeartToday && metric.heartDaySmoothed.size > 1) {
+            Spacer(Modifier.height(10.dp))
+            Sparkline(metric.heartDaySmoothed, color, Modifier.fillMaxWidth().height(72.dp))
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Today · ${metric.heartSmoothingMinutes.takeIf { it > 0 } ?: 15}-min smoothed · ${metric.heartDaySampleCount} samples",
+                style=MaterialTheme.typography.bodySmall,
+                color=MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (metric.heartDayMin != null && metric.heartDayMean != null && metric.heartDayMax != null) {
+                Text(
+                    "Min ${formatMetric(metric.heartDayMin)} · mean ${formatMetric(metric.heartDayMean)} · max ${formatMetric(metric.heartDayMax)} ${metric.unit}",
+                    style=MaterialTheme.typography.bodySmall,
+                    color=MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        } else if(metric.sparkline.size>1) {
+            Spacer(Modifier.height(10.dp))
+            Sparkline(
+                metric.sparkline,
+                color,
+                Modifier.fillMaxWidth().height(62.dp),
+                metric.sparklineMean,
+                metric.sparklineStd,
+            )
+            if (metric.sparklineMean != null && metric.sparklineStd != null) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "7-day history · shaded band = mean ± 1 SD",
+                    style=MaterialTheme.typography.bodySmall,
+                    color=MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        if (metric.completion && metric.percentage != null) {
+            Spacer(Modifier.height(10.dp))
+            LinearProgressIndicator(
+                progress = { (metric.percentage / 100.0).coerceIn(0.0, 1.0).toFloat() },
+                modifier = Modifier.fillMaxWidth(),
+                color = color,
+            )
+            Spacer(Modifier.height(3.dp))
+            Text(
+                "${"%.0f".format(metric.percentage)}% of the previous 7-day mean",
+                style=MaterialTheme.typography.bodySmall,
+                color=MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
         metric.baseline?.let { Text("7-day baseline · ${formatMetric(it)} ${metric.unit}", style=MaterialTheme.typography.bodySmall, color=MaterialTheme.colorScheme.onSurfaceVariant) }
+        if (metric.latestAvailable) {
+            Text("Latest available · ${metric.valueDate}", style=MaterialTheme.typography.labelSmall, color=MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     } }
 }
 
-@Composable fun Sparkline(values: List<Double>, color: Color, modifier: Modifier=Modifier) { Canvas(modifier) {
+@Composable fun Sparkline(
+    values: List<Double>,
+    color: Color,
+    modifier: Modifier=Modifier,
+    mean: Double? = null,
+    standardDeviation: Double? = null,
+) { Canvas(modifier) {
     val finite = values.filter { it.isFinite() }
     if (finite.size < 2) return@Canvas
-    val lo=finite.minOrNull()?:0.0; val hi=finite.maxOrNull()?:1.0; val span=max(1e-9,hi-lo); val step=size.width/(finite.size-1)
-    val path=Path(); finite.forEachIndexed { i,v -> val x=i*step; val y=size.height-((v-lo)/span*size.height).toFloat(); if(i==0) path.moveTo(x,y) else path.lineTo(x,y) }
+    val bandLow = if (mean != null && standardDeviation != null && mean.isFinite() && standardDeviation.isFinite()) mean-standardDeviation else null
+    val bandHigh = if (mean != null && standardDeviation != null && mean.isFinite() && standardDeviation.isFinite()) mean+standardDeviation else null
+    val scaleValues = buildList { addAll(finite); bandLow?.let(::add); bandHigh?.let(::add) }
+    val lo=scaleValues.minOrNull()?:0.0; val hi=scaleValues.maxOrNull()?:1.0; val span=max(1e-9,hi-lo)
+    fun y(value: Double) = size.height-((value-lo)/span*size.height).toFloat()
+
+    if (bandLow != null && bandHigh != null) {
+        val top = y(bandHigh).coerceAtMost(y(bandLow))
+        val bottom = y(bandHigh).coerceAtLeast(y(bandLow))
+        drawRect(
+            color.copy(alpha=0.14f),
+            topLeft=androidx.compose.ui.geometry.Offset(0f, top),
+            size=androidx.compose.ui.geometry.Size(size.width, max(1f,bottom-top)),
+        )
+        mean?.let {
+            val meanY = y(it)
+            drawLine(
+                color.copy(alpha=0.55f),
+                androidx.compose.ui.geometry.Offset(0f,meanY),
+                androidx.compose.ui.geometry.Offset(size.width,meanY),
+                strokeWidth=2f,
+            )
+        }
+    }
+
+    val step=size.width/(finite.size-1)
+    val path=Path(); finite.forEachIndexed { i,v -> val x=i*step; val yy=y(v); if(i==0) path.moveTo(x,yy) else path.lineTo(x,yy) }
     drawPath(path,color,style=androidx.compose.ui.graphics.drawscope.Stroke(width=3f))
 } }
 

@@ -27,7 +27,6 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
     private val nano = GeminiNanoEngine()
     val specs: List<DataTypeSpec> by lazy { core.specs() }
     private val googleScopes: Set<String> by lazy { specs.map { it.scope }.filter { it.isNotBlank() }.toSet() }
-    private val aiDataTypes: List<String> by lazy { specs.filter { it.autoSync }.map { it.key } }
 
     var metrics by mutableStateOf<List<MetricCard>>(emptyList()); private set
     var counts by mutableStateOf<Map<String, Int>>(emptyMap()); private set
@@ -65,9 +64,8 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Rebuild only the small dashboard working set. A malformed record or Python
-     * metric error must never terminate the Android process: the archive remains
-     * available and the failure is surfaced in the UI instead.
+     * The shared Python core now reads Android SQLite lazily, exactly as the desktop
+     * analysis layer reads its store. No complete archive JSON is materialised in RAM.
      */
     fun refresh() {
         viewModelScope.launch {
@@ -80,12 +78,11 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
                 }
 
                 val today = LocalDate.now()
-                val dashboardRecords = withContext(Dispatchers.IO) {
-                    database.dashboardRecordsJson(today)
+                val databasePath = withContext(Dispatchers.IO) { database.readableDatabase.path }
+                val dashboardJson = withContext(Dispatchers.Default) {
+                    core.dashboardFromDatabase(databasePath, today.toString())
                 }
-                metrics = withContext(Dispatchers.Default) {
-                    parseMetricCards(core.dashboard(dashboardRecords, today.toString()))
-                }
+                metrics = parseMetricCards(dashboardJson)
                 if (metrics.isEmpty()) {
                     status = "Data loaded · no dashboard metric could be derived yet"
                 }
@@ -146,23 +143,28 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
         if (question.isBlank()) return
         launchBusy("Preparing deterministic evidence…") {
             val today = LocalDate.now()
-            val startDay = today.minusDays((analysisDays - 1).toLong())
-            val start = startDay.toString()
+            val start = today.minusDays((analysisDays - 1).toLong()).toString()
             val end = today.plusDays(1).toString()
-            val records = withContext(Dispatchers.IO) {
-                database.analysisRecordsJson(aiDataTypes, start, end)
-            }
+            val databasePath = withContext(Dispatchers.IO) { database.readableDatabase.path }
+
+            status = "Computing deterministic metrics directly from the local archive…"
             val evidence = withContext(Dispatchers.Default) {
-                core.evidence(records, start, end)
+                core.evidenceFromDatabase(databasePath, start, end)
             }
+            status = "Deterministic evidence ready"
+
             when (aiEngine) {
                 AiEngine.DETERMINISTIC -> {
                     aiAnswer = deterministicSummary(evidence)
                     status = "Deterministic analysis complete"
                 }
                 AiEngine.AUTOMATIC, AiEngine.GEMINI_NANO -> {
+                    status = "Compressing deterministic evidence for the on-device model…"
+                    val modelEvidence = withContext(Dispatchers.Default) {
+                        core.compactEvidence(evidence)
+                    }
                     try {
-                        val result = nano.answer(question, evidence) { status = it }
+                        val result = nano.answer(question, modelEvidence) { status = it }
                         aiAnswer = result.answer
                         aiModelName = result.model
                         status = "Analysis complete · ${result.engine}"
