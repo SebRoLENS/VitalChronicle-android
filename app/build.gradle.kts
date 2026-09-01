@@ -5,6 +5,10 @@ plugins {
     id("com.chaquo.python")
 }
 
+val releaseKeystorePath = providers.environmentVariable("VC_ANDROID_KEYSTORE_PATH").orNull
+val releaseKeystorePassword = providers.environmentVariable("VC_ANDROID_KEYSTORE_PASSWORD").orNull
+val releaseKeyAlias = providers.environmentVariable("VC_ANDROID_KEY_ALIAS").orNull
+
 android {
     namespace = "io.github.sebrolens.vitalchronicle.android"
     compileSdk = 36
@@ -28,6 +32,31 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    signingConfigs {
+        if (
+            !releaseKeystorePath.isNullOrBlank() &&
+            !releaseKeystorePassword.isNullOrBlank() &&
+            !releaseKeyAlias.isNullOrBlank()
+        ) {
+            create("release") {
+                storeFile = file(releaseKeystorePath)
+                storePassword = releaseKeystorePassword
+                keyAlias = releaseKeyAlias
+                // VitalChronicle intentionally uses the same password for the
+                // keystore and key entry, reducing the number of CI secrets.
+                keyPassword = releaseKeystorePassword
+            }
+        }
+    }
+
+    val stableReleaseSigning = signingConfigs.findByName("release")
+    buildTypes {
+        getByName("release") {
+            stableReleaseSigning?.let { signingConfig = it }
+            isMinifyEnabled = false
+        }
     }
 
     packaging {
