@@ -5,6 +5,7 @@ import com.chaquo.python.Python
 class PythonCore {
     private val module by lazy { Python.getInstance().getModule("mobile_bridge") }
     private val dashboardModule by lazy { Python.getInstance().getModule("android_dashboard") }
+    private val nanoRouterModule by lazy { Python.getInstance().getModule("nano_router") }
 
     fun specs(): List<DataTypeSpec> = parseSpecs(module.callAttr("data_type_specs").toString())
 
@@ -28,7 +29,7 @@ class PythonCore {
         start: String,
         endExclusive: String,
         question: String,
-    ): String = module.callAttr(
+    ): String = nanoRouterModule.callAttr(
         "nano_evidence_from_sqlite",
         databasePath,
         start,

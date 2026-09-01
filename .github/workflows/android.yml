@@ -49,6 +49,9 @@ jobs:
           --dest app/src/main/python
           --assets app/src/main/assets
 
+      - name: Test multilingual Nano router
+        run: PYTHONPATH=app/src/main/python python scripts/test_nano_router.py
+
       - name: Show upstream revision
         run: cat app/src/main/assets/shared_core_revision.json
 
@@ -123,6 +126,9 @@ jobs:
           --source upstream/VitalChronicle
           --dest app/src/main/python
           --assets app/src/main/assets
+
+      - name: Test multilingual Nano router
+        run: PYTHONPATH=app/src/main/python python scripts/test_nano_router.py
 
       - uses: gradle/actions/setup-gradle@v4
         with:
