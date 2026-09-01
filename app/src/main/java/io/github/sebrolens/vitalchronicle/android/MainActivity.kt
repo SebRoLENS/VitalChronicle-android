@@ -366,6 +366,7 @@ enum class Screen(val label: String, val icon: ImageVector) {
             Text("AI engine",fontWeight=FontWeight.SemiBold)
             AiEngine.entries.forEach { engine -> Row(Modifier.fillMaxWidth().clickable{vm.aiEngine=engine}.padding(vertical=4.dp),verticalAlignment=Alignment.CenterVertically){ RadioButton(selected=vm.aiEngine==engine,onClick={vm.aiEngine=engine}); Column { Text(engine.title); if(engine==AiEngine.AUTOMATIC) Text("Recommended",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.primary) } } }
             vm.aiModelName?.let { Text("Detected built-in model · $it",style=MaterialTheme.typography.bodySmall) }
+            Text("Quality profile · Accurate local (temperature 0.2, expanded answer budget, FULL model when available)",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
         } } }
 
         item { Card { Column {
