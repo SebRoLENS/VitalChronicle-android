@@ -5,17 +5,17 @@ import json
 from datetime import datetime
 from typing import Any
 
-from google_health_viewer.analysis import build_daily_progress_snapshot, smooth_heart_rate_points
+from google_health_viewer.analysis import build_daily_progress_snapshot
 from mobile_bridge import SQLiteStore
 
 
-def _one_minute_heart_rate(snapshot: dict[str, Any]) -> dict[str, Any]:
-    """Render today's heart-rate curve at one-minute resolution.
+def _five_minute_heart_rate(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Render today's server-side five-minute heart-rate averages directly.
 
-    The shared desktop snapshot currently exposes a 15-minute smoothed curve.
-    Android keeps the same raw deterministic samples and replaces only the
-    presentation series with one-minute median bins / one-minute smoothing.
-    Stored heart-rate samples are never modified.
+    Android downloads heart rate through Google Health's rollUp endpoint with a
+    300-second window. The shared core therefore already receives one averaged
+    point per five-minute interval; applying another local smoothing pass would
+    blur the data unnecessarily and misrepresent its real temporal resolution.
     """
     for metric in snapshot.get("metrics", []):
         if not isinstance(metric, dict) or metric.get("data_type") != "heart-rate-today":
@@ -28,12 +28,9 @@ def _one_minute_heart_rate(snapshot: dict[str, Any]) -> dict[str, Any]:
                     clean_points.append((float(point[0]), float(point[1])))
                 except (TypeError, ValueError):
                     continue
-        metric["heart_day_smoothed"] = smooth_heart_rate_points(
-            clean_points,
-            bin_seconds=60,
-            window_seconds=60,
-        )
-        metric["heart_smoothing_minutes"] = 1
+        metric["heart_day_smoothed"] = clean_points
+        metric["heart_smoothing_minutes"] = 5
+        metric["metric"] = "5-minute average"
     return snapshot
 
 
@@ -42,7 +39,7 @@ def dashboard_from_sqlite(database_path: str, reference_day: str | None = None) 
     try:
         day = datetime.fromisoformat(reference_day).date() if reference_day else None
         snapshot = build_daily_progress_snapshot(store, day)
-        snapshot = _one_minute_heart_rate(snapshot)
+        snapshot = _five_minute_heart_rate(snapshot)
         return json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"))
     finally:
         store.close()
