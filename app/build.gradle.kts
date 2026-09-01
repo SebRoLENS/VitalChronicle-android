@@ -17,8 +17,8 @@ android {
         applicationId = "io.github.sebrolens.vitalchronicle.android"
         minSdk = 26
         targetSdk = 36
-        versionCode = 17
-        versionName = "0.3.0"
+        versionCode = 18
+        versionName = "0.3.1"
         ndk {
             abiFilters += listOf("arm64-v8a")
         }
@@ -61,6 +61,10 @@ android {
 
     packaging {
         resources.excludes += setOf("META-INF/DEPENDENCIES", "META-INF/LICENSE*", "META-INF/NOTICE*")
+        // llama.cpp discovers the best CPU backend by scanning nativeLibraryDir
+        // at runtime. Legacy JNI packaging guarantees that every ARM variant is
+        // extracted there instead of remaining loadable only from inside the APK.
+        jniLibs.useLegacyPackaging = true
     }
 }
 

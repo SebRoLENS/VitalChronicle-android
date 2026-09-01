@@ -75,6 +75,17 @@ jobs:
       - name: Build Android debug test APK
         run: gradle :app:assembleDebug --stacktrace
 
+      - name: Verify on-device llama.cpp packaging
+        shell: bash
+        run: |
+          apk=app/build/outputs/apk/debug/app-debug.apk
+          test -f "$apk"
+          grep -q 'android:extractNativeLibs="true"' app/src/main/AndroidManifest.xml
+          entries=$(unzip -Z1 "$apk")
+          for library in libai-chat.so libllama.so libggml.so libggml-cpu-android_armv8.0_1.so; do
+            grep -qx "lib/arm64-v8a/$library" <<< "$entries"
+          done
+
       - name: Name debug test APK
         run: cp app/build/outputs/apk/debug/app-debug.apk VitalChronicle-Android-${{ steps.version.outputs.version }}-debug.apk
 

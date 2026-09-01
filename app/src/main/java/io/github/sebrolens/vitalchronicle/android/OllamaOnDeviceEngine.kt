@@ -3,6 +3,7 @@ package io.github.sebrolens.vitalchronicle.android
 import android.content.Context
 import com.arm.aichat.AiChat
 import com.arm.aichat.InferenceEngine
+import com.arm.aichat.UnsupportedArchitectureException
 import com.arm.aichat.isModelLoaded
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -88,7 +89,17 @@ class OllamaOnDeviceEngine(context: Context) {
         if (error != null) withContext(Dispatchers.IO) { engine.cleanUp() }
 
         onStage("Loading ${model.id} into memory…")
-        engine.loadModel(file.absolutePath)
+        try {
+            engine.loadModel(file.absolutePath)
+        } catch (e: UnsupportedArchitectureException) {
+            // The upstream Android wrapper currently maps every native model-load
+            // failure to this exception, not only an unsupported CPU architecture.
+            throw IllegalStateException(
+                "llama.cpp could not load ${model.id}. The model file may be damaged, " +
+                    "unreadable, or incompatible with the installed native backend.",
+                e,
+            )
+        }
         onStage("Preparing the private analysis context…")
         engine.setSystemPrompt(SYSTEM_PROMPT)
     }
