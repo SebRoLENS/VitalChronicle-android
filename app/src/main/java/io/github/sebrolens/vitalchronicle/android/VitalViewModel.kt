@@ -10,6 +10,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -26,6 +27,7 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
     private val nano = GeminiNanoEngine()
     val specs: List<DataTypeSpec> by lazy { core.specs() }
     private val googleScopes: Set<String> by lazy { specs.map { it.scope }.filter { it.isNotBlank() }.toSet() }
+    private val aiDataTypes: List<String> by lazy { specs.filter { it.autoSync }.map { it.key } }
 
     var metrics by mutableStateOf<List<MetricCard>>(emptyList()); private set
     var counts by mutableStateOf<Map<String, Int>>(emptyMap()); private set
@@ -62,16 +64,37 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
         probeAi()
     }
 
+    /**
+     * Rebuild only the small dashboard working set. A malformed record or Python
+     * metric error must never terminate the Android process: the archive remains
+     * available and the failure is surfaced in the UI instead.
+     */
     fun refresh() {
         viewModelScope.launch {
-            counts = withContext(Dispatchers.IO) { database.counts() }
-            metrics = withContext(Dispatchers.Default) {
-                if (counts.isEmpty()) emptyList() else {
-                    val today = LocalDate.now()
-                    val start = today.minusDays(9).toString()
-                    val end = today.plusDays(1).toString()
-                    parseMetricCards(core.dashboard(database.allRecordsJson(start, end), today.toString()))
+            try {
+                val refreshedCounts = withContext(Dispatchers.IO) { database.counts() }
+                counts = refreshedCounts
+                if (refreshedCounts.isEmpty()) {
+                    metrics = emptyList()
+                    return@launch
                 }
+
+                val today = LocalDate.now()
+                val dashboardRecords = withContext(Dispatchers.IO) {
+                    database.dashboardRecordsJson(today)
+                }
+                metrics = withContext(Dispatchers.Default) {
+                    parseMetricCards(core.dashboard(dashboardRecords, today.toString()))
+                }
+                if (metrics.isEmpty()) {
+                    status = "Data loaded · no dashboard metric could be derived yet"
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                metrics = emptyList()
+                lastError = "Unable to build the local dashboard: ${e.message ?: e.javaClass.simpleName}"
+                status = "Dashboard unavailable · local data are still stored safely"
             }
         }
     }
@@ -126,7 +149,12 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
             val startDay = today.minusDays((analysisDays - 1).toLong())
             val start = startDay.toString()
             val end = today.plusDays(1).toString()
-            val evidence = withContext(Dispatchers.Default) { core.evidence(database.allRecordsJson(start, end), start, end) }
+            val records = withContext(Dispatchers.IO) {
+                database.analysisRecordsJson(aiDataTypes, start, end)
+            }
+            val evidence = withContext(Dispatchers.Default) {
+                core.evidence(records, start, end)
+            }
             when (aiEngine) {
                 AiEngine.DETERMINISTIC -> {
                     aiAnswer = deterministicSummary(evidence)
