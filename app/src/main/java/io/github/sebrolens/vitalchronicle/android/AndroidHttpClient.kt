@@ -7,6 +7,7 @@ import okhttp3.Dns
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import java.net.InetAddress
 import java.net.UnknownHostException
 
 /**
@@ -47,10 +48,12 @@ class AndroidHttpClient(
 
     private fun activeNetworkClient(): OkHttpClient? {
         val network = connectivity.activeNetwork ?: return null
-        val networkDns = Dns { hostname ->
-            val addresses = network.getAllByName(hostname).toList()
-            if (addresses.isEmpty()) throw UnknownHostException("No addresses returned for $hostname")
-            addresses
+        val networkDns = object : Dns {
+            override fun lookup(hostname: String): List<InetAddress> {
+                val addresses = network.getAllByName(hostname).toList()
+                if (addresses.isEmpty()) throw UnknownHostException("No addresses returned for $hostname")
+                return addresses
+            }
         }
         return defaultClient.newBuilder()
             .socketFactory(network.socketFactory)
