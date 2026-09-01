@@ -64,22 +64,134 @@ jobs:
           test -n "$version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - name: Build Android
+      # Pull requests and scheduled compatibility checks deliberately use the
+      # ephemeral debug key. These APKs are CI test artifacts only and are never
+      # published as downloadable releases.
+      - name: Build Android debug test APK
         run: gradle :app:assembleDebug --stacktrace
 
-      - name: Name APK
-        run: |
-          cp app/build/outputs/apk/debug/app-debug.apk VitalChronicle-Android-${{ steps.version.outputs.version }}.apk
-          cp app/build/outputs/apk/debug/app-debug.apk VitalChronicle-Android.apk
+      - name: Name debug test APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk VitalChronicle-Android-${{ steps.version.outputs.version }}-debug.apk
 
       - uses: actions/upload-artifact@v4
         with:
-          name: VitalChronicle-Android-${{ steps.version.outputs.version }}
+          name: VitalChronicle-Android-${{ steps.version.outputs.version }}-debug
+          path: VitalChronicle-Android-${{ steps.version.outputs.version }}-debug.apk
+          if-no-files-found: error
+
+  release:
+    # Signing secrets are exposed only to trusted main-branch events. They are
+    # never available to pull-request code.
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    needs: build
+    runs-on: ubuntu-24.04
+    env:
+      RELEASE_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+    steps:
+      - name: Checkout Android repository
+        uses: actions/checkout@v4
+
+      - name: Checkout canonical VitalChronicle core
+        uses: actions/checkout@v4
+        with:
+          repository: SebRoLENS/VitalChronicle
+          ref: main
+          path: upstream/VitalChronicle
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0'
+
+      - name: Sync canonical shared core
+        run: >-
+          python scripts/sync_shared_core.py
+          --source upstream/VitalChronicle
+          --dest app/src/main/python
+          --assets app/src/main/assets
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Read Android version
+        id: version
+        shell: bash
+        run: |
+          version=$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -n 1)
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Check stable signing configuration
+        id: signing
+        shell: bash
+        run: |
+          if [[ -n "$RELEASE_KEYSTORE_B64" && -n "$RELEASE_KEYSTORE_PASSWORD" && -n "$RELEASE_KEY_ALIAS" ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Stable Android signing secrets are not configured. GitHub Release publication is skipped."
+          fi
+
+      - name: Restore stable release keystore
+        if: steps.signing.outputs.available == 'true'
+        shell: bash
+        run: |
+          keystore="$RUNNER_TEMP/vitalchronicle-release.jks"
+          printf '%s' "$RELEASE_KEYSTORE_B64" | base64 --decode > "$keystore"
+          chmod 600 "$keystore"
+          echo "VC_ANDROID_KEYSTORE_PATH=$keystore" >> "$GITHUB_ENV"
+          echo "VC_ANDROID_KEYSTORE_PASSWORD=$RELEASE_KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+          echo "VC_ANDROID_KEY_ALIAS=$RELEASE_KEY_ALIAS" >> "$GITHUB_ENV"
+
+      - name: Build stable signed release APK
+        if: steps.signing.outputs.available == 'true'
+        run: gradle :app:assembleRelease --stacktrace
+
+      - name: Verify release signature
+        if: steps.signing.outputs.available == 'true'
+        id: cert
+        shell: bash
+        run: |
+          apk=app/build/outputs/apk/release/app-release.apk
+          test -f "$apk"
+          apksigner verify --verbose --print-certs "$apk"
+          sha1=$(apksigner verify --print-certs "$apk" | sed -n 's/^Signer #1 certificate SHA-1 digest: //p' | head -n 1)
+          test -n "$sha1"
+          echo "sha1=$sha1" >> "$GITHUB_OUTPUT"
+          echo "### Android release signing" >> "$GITHUB_STEP_SUMMARY"
+          echo "Stable certificate SHA-1: \`$sha1\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Name signed APK
+        if: steps.signing.outputs.available == 'true'
+        shell: bash
+        run: |
+          cp app/build/outputs/apk/release/app-release.apk VitalChronicle-Android-${{ steps.version.outputs.version }}.apk
+          cp app/build/outputs/apk/release/app-release.apk VitalChronicle-Android.apk
+
+      - uses: actions/upload-artifact@v4
+        if: steps.signing.outputs.available == 'true'
+        with:
+          name: VitalChronicle-Android-${{ steps.version.outputs.version }}-signed
           path: VitalChronicle-Android-${{ steps.version.outputs.version }}.apk
           if-no-files-found: error
 
       - name: Publish GitHub Release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: steps.signing.outputs.available == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
