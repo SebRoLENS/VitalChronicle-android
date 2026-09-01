@@ -81,7 +81,13 @@ enum class Screen(val label: String, val icon: ImageVector) {
                 icon = Icons.Default.Favorite
             )
         }
-        if(vm.metrics.isEmpty()) item { EmptyCard("No local measurements yet", "Connect Google and run a sync. Health records stay on this device.") }
+        if(vm.metrics.isEmpty()) item {
+            EmptyCard(
+                if(vm.counts.isEmpty()) "No local measurements yet" else "Building local summaries",
+                if(vm.counts.isEmpty()) "Connect Google and run a sync. Health records stay on this device." else "Your downloaded health records are stored locally. VitalChronicle is preparing a bounded summary dataset instead of loading the entire archive into memory."
+            )
+        }
+        vm.lastError?.let { err -> item { ErrorCard(err) } }
         items(vm.metrics, key={it.dataType}) { MetricCardView(it) }
         item { Button(onClick=vm::sync, enabled=!vm.busy && vm.googleConnected, modifier=Modifier.fillMaxWidth()) { Icon(Icons.Default.Sync,null); Spacer(Modifier.width(8.dp)); Text("Download / update") } }
     }
@@ -103,8 +109,10 @@ enum class Screen(val label: String, val icon: ImageVector) {
 }
 
 @Composable fun Sparkline(values: List<Double>, color: Color, modifier: Modifier=Modifier) { Canvas(modifier) {
-    val lo=values.minOrNull()?:0.0; val hi=values.maxOrNull()?:1.0; val span=max(1e-9,hi-lo); val step=size.width/(values.size-1)
-    val path=Path(); values.forEachIndexed { i,v -> val x=i*step; val y=size.height-((v-lo)/span*size.height).toFloat(); if(i==0) path.moveTo(x,y) else path.lineTo(x,y) }
+    val finite = values.filter { it.isFinite() }
+    if (finite.size < 2) return@Canvas
+    val lo=finite.minOrNull()?:0.0; val hi=finite.maxOrNull()?:1.0; val span=max(1e-9,hi-lo); val step=size.width/(finite.size-1)
+    val path=Path(); finite.forEachIndexed { i,v -> val x=i*step; val y=size.height-((v-lo)/span*size.height).toFloat(); if(i==0) path.moveTo(x,y) else path.lineTo(x,y) }
     drawPath(path,color,style=androidx.compose.ui.graphics.drawscope.Stroke(width=3f))
 } }
 
@@ -222,7 +230,7 @@ enum class Screen(val label: String, val icon: ImageVector) {
                         )
                     }
                 }
-            }
+            } }
         }
         item { SettingCard(Icons.Default.AccountCircle,"Google account",if(vm.googleConnected) "Connected with Google Identity Services" else "Not connected — complete the setup assistant above first") {
             if(!vm.googleConnected) Button(
