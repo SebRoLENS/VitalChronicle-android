@@ -151,7 +151,7 @@ enum class Screen(val label: String, val icon: ImageVector) {
             if(vm.vault.token()==null) Button(onClick={vm.connectGoogle(activity)},enabled=!vm.busy && vm.vault.credentials()!=null){Text("Connect")}
             else TextButton(onClick=vm::disconnectGoogle){Text("Disconnect")}
         } }
-        item { SettingCard(Icons.Default.Sync,"Sync history","${vm.historyDays} days initially; later syncs are incremental") { Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){ listOf(30,90,365).forEach{d->FilterChip(selected=vm.historyDays==d,onClick={vm.historyDays=d},label={Text(if(d==365)"1y" else "${d}d")})} } } }
+        item { SettingCard(Icons.Default.Sync,"Sync history","Up to ${DataRetention.GENERAL_DAYS} days; high-frequency cardiac streams keep ${DataRetention.HIGH_VOLUME_CARDIAC_DAYS} days") { Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){ listOf(30,90).forEach{d->FilterChip(selected=vm.historyDays==d,onClick={vm.historyDays=d},label={Text("${d}d")})} } } }
 
         item { SectionTitle("Local AI", "Automatic mode prefers Android's built-in Gemini Nano/AICore. No health data is sent to a cloud AI service.") }
         item { Card { Column(Modifier.padding(16.dp), verticalArrangement=Arrangement.spacedBy(10.dp)) {
@@ -168,7 +168,7 @@ enum class Screen(val label: String, val icon: ImageVector) {
                 Text("Gemini Nano availability is verified at runtime by ML Kit. Unsupported devices automatically retain deterministic analysis.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             } }
         } } }
-        item { SectionTitle("Privacy & shared core", "VitalChronicle Android ${BuildConfig.VERSION_NAME} stores health records locally. Its deterministic metrics are executed from the same Python core as the desktop application.") }
+        item { SectionTitle("Privacy & shared core", "VitalChronicle Android ${BuildConfig.VERSION_NAME} stores health records locally. General history is limited to ${DataRetention.GENERAL_DAYS} days and high-frequency cardiac raw data to ${DataRetention.HIGH_VOLUME_CARDIAC_DAYS} days. Deterministic metrics use the same Python core as desktop.") }
         item { OutlinedButton(onClick={vm.database.clearAll();vm.refresh()},modifier=Modifier.fillMaxWidth()) { Icon(Icons.Default.DeleteOutline,null); Spacer(Modifier.width(8.dp)); Text("Delete local health archive") } }
         vm.lastError?.let { item { ErrorCard(it) } }
     }
