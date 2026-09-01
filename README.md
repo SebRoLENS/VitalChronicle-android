@@ -1,6 +1,16 @@
 # VitalChronicle Android
 
+[![Download latest APK](https://img.shields.io/badge/Download-latest%20APK-3DDC84?logo=android&logoColor=white)](https://github.com/SebRoLENS/VitalChronicle-android/releases/latest/download/VitalChronicle-Android.apk)
+
 Native Android implementation of [VitalChronicle](https://github.com/SebRoLENS/VitalChronicle).
+
+## Download
+
+Download the **latest Android APK directly** from GitHub Releases:
+
+**[Download VitalChronicle-Android.apk](https://github.com/SebRoLENS/VitalChronicle-android/releases/latest/download/VitalChronicle-Android.apk)**
+
+The link always points to the APK attached to the most recent GitHub Release, so it does not need to change when the app version changes.
 
 ## Architecture
 
@@ -24,4 +34,4 @@ The canonical shared core lives in [`SebRoLENS/VitalChronicle`](https://github.c
 
 ## Version
 
-Android app version: **0.1.0**.
+The packaged app version is read directly from the Android build configuration. Use the download link above for the current release.
