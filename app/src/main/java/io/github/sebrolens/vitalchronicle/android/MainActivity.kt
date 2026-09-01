@@ -144,13 +144,13 @@ enum class Screen(val label: String, val icon: ImageVector) {
             Sparkline(metric.heartDaySmoothed, color, Modifier.fillMaxWidth().height(72.dp))
             Spacer(Modifier.height(6.dp))
             Text(
-                "Today · ${metric.heartSmoothingMinutes.takeIf { it > 0 } ?: 15}-min smoothed · ${metric.heartDaySampleCount} samples",
+                "Today · ${metric.heartSmoothingMinutes.takeIf { it > 0 } ?: 5}-min averages · ${metric.heartDaySampleCount} intervals",
                 style=MaterialTheme.typography.bodySmall,
                 color=MaterialTheme.colorScheme.onSurfaceVariant,
             )
             if (metric.heartDayMin != null && metric.heartDayMean != null && metric.heartDayMax != null) {
                 Text(
-                    "Min ${formatMetric(metric.heartDayMin)} · mean ${formatMetric(metric.heartDayMean)} · max ${formatMetric(metric.heartDayMax)} ${metric.unit}",
+                    "5-min avg range · min ${formatMetric(metric.heartDayMin)} · mean ${formatMetric(metric.heartDayMean)} · max ${formatMetric(metric.heartDayMax)} ${metric.unit}",
                     style=MaterialTheme.typography.bodySmall,
                     color=MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -475,7 +475,7 @@ enum class Screen(val label: String, val icon: ImageVector) {
         }
         item { AppUpdateCard(vm, activity) }
 
-        item { SectionTitle("Privacy & shared core", "VitalChronicle Android ${BuildConfig.VERSION_NAME} stores health records locally. General history is limited to ${DataRetention.GENERAL_DAYS} days and high-frequency cardiac raw data to ${DataRetention.HIGH_VOLUME_CARDIAC_DAYS} days. Deterministic metrics use the same Python core as desktop.") }
+        item { SectionTitle("Privacy & shared core", "VitalChronicle Android ${BuildConfig.VERSION_NAME} stores health records locally. General history is limited to ${DataRetention.GENERAL_DAYS} days and high-frequency cardiac data to ${DataRetention.HIGH_VOLUME_CARDIAC_DAYS} days. Deterministic metrics use the same Python core as desktop.") }
         item { OutlinedButton(onClick={vm.database.clearAll();vm.refresh()},modifier=Modifier.fillMaxWidth()) { Icon(Icons.Default.DeleteOutline,null); Spacer(Modifier.width(8.dp)); Text("Delete local health archive") } }
         vm.lastError?.let { item { ErrorCard(it) } }
     }
