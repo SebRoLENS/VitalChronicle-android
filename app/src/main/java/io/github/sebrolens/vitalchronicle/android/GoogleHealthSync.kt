@@ -14,17 +14,19 @@ import java.time.format.DateTimeFormatter
 class GoogleHealthSync(
     private val database: HealthDatabase,
     private val core: PythonCore,
-    private val oauth: OAuthManager,
+    private val oauth: GoogleAuthorizationManager,
     private val http: AndroidHttpClient,
 ) {
+    private val googleScopes: Set<String> by lazy {
+        core.specs().map { it.scope }.filter { it.isNotBlank() }.toSet()
+    }
+
     suspend fun sync(historyDays: Int, progress: (String) -> Unit): Int = withContext(Dispatchers.IO) {
         val specs = core.specs().filter { it.autoSync }
         val today = LocalDate.now()
         val requestedHistory = historyDays.coerceIn(1, DataRetention.GENERAL_DAYS)
         var total = 0
 
-        // Remove legacy data before downloading anything new. The actual file
-        // compaction is performed at app startup, not on every sync.
         database.pruneRetention(today, compact = false)
 
         specs.forEachIndexed { index, spec ->
@@ -38,6 +40,9 @@ class GoogleHealthSync(
                 val pages = if (spec.operation == "daily_rollup") rollup(spec, start, today) else list(spec, start, today)
                 total += pages
                 database.setSyncStatus(spec.key, "ok", "$pages records · ${DataRetention.daysFor(spec.key)}d retention")
+            } catch (e: GoogleAuthorizationRequiredException) {
+                database.setSyncStatus(spec.key, "error", e.message.orEmpty())
+                throw e
             } catch (e: Exception) {
                 database.setSyncStatus(spec.key, "error", e.message.orEmpty())
             }
@@ -119,16 +124,31 @@ class GoogleHealthSync(
 
     private suspend fun requestJson(base: Request): JSONObject {
         var last: Exception? = null
-        repeat(3) { attempt ->
+        retry@ repeat(3) { attempt ->
             try {
-                val access = oauth.validAccessToken()
-                val req = base.newBuilder().header("Authorization", "Bearer $access").header("Accept", "application/json").build()
+                val access = oauth.validAccessToken(googleScopes)
+                val req = base.newBuilder()
+                    .header("Authorization", "Bearer $access")
+                    .header("Accept", "application/json")
+                    .build()
                 http.execute(req).use { response ->
                     val text = response.body?.string().orEmpty()
                     if (response.isSuccessful) return if (text.isBlank()) JSONObject() else JSONObject(text)
-                    if (response.code in setOf(429, 500, 502, 503, 504) && attempt < 2) delay((1L shl attempt) * 1000L)
-                    else error("Google Health ${response.code}: $text")
+                    if (response.code == 401 && attempt < 2) {
+                        oauth.clearCachedToken(access)
+                        last = IllegalStateException("Google Health 401: access token rejected")
+                        delay((1L shl attempt) * 500L)
+                        return@retry
+                    }
+                    if (response.code in setOf(429, 500, 502, 503, 504) && attempt < 2) {
+                        last = IllegalStateException("Google Health ${response.code}: $text")
+                        delay((1L shl attempt) * 1000L)
+                        return@retry
+                    }
+                    error("Google Health ${response.code}: $text")
                 }
+            } catch (e: GoogleAuthorizationRequiredException) {
+                throw e
             } catch (e: Exception) {
                 last = e
                 if (attempt < 2) delay((1L shl attempt) * 1000L)
