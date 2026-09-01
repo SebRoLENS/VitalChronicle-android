@@ -20,22 +20,33 @@ class GoogleHealthSync(
     suspend fun sync(historyDays: Int, progress: (String) -> Unit): Int = withContext(Dispatchers.IO) {
         val specs = core.specs().filter { it.autoSync }
         val today = LocalDate.now()
+        val requestedHistory = historyDays.coerceIn(1, DataRetention.GENERAL_DAYS)
         var total = 0
+
+        // Remove legacy data before downloading anything new. The actual file
+        // compaction is performed at app startup, not on every sync.
+        database.pruneRetention(today, compact = false)
+
         specs.forEachIndexed { index, spec ->
             progress("${index + 1}/${specs.size} · ${spec.label}")
             database.setSyncStatus(spec.key, "running")
             try {
                 val latest = database.latestStart(spec.key)?.take(10)?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
-                val initial = today.minusDays((historyDays - 1).toLong())
+                val retainedDays = DataRetention.requestedDays(spec.key, requestedHistory)
+                val initial = today.minusDays((retainedDays - 1).toLong())
                 val start = if (latest != null && latest.isAfter(initial)) latest.minusDays(1) else initial
                 val pages = if (spec.operation == "daily_rollup") rollup(spec, start, today) else list(spec, start, today)
                 total += pages
-                database.setSyncStatus(spec.key, "ok", "$pages records")
+                database.setSyncStatus(spec.key, "ok", "$pages records · ${DataRetention.daysFor(spec.key)}d retention")
             } catch (e: Exception) {
                 database.setSyncStatus(spec.key, "error", e.message.orEmpty())
             }
         }
-        progress("Sync complete · $total records processed")
+        val removed = database.pruneRetention(today, compact = false)
+        progress(
+            if (removed > 0) "Sync complete · $total records processed · $removed expired records removed"
+            else "Sync complete · $total records processed"
+        )
         total
     }
 
