@@ -21,4 +21,7 @@ class PythonCore {
 
     fun evidenceFromDatabase(databasePath: String, start: String, endExclusive: String): String =
         module.callAttr("evidence_from_sqlite", databasePath, start, endExclusive).toString()
+
+    fun compactEvidence(evidenceJson: String): String =
+        module.callAttr("compact_evidence", evidenceJson).toString()
 }
