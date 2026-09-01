@@ -13,7 +13,6 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from google_health_viewer.ai_insights import build_ai_ready_snapshot
-from google_health_viewer.ai_pipeline import ensure_compact_evidence
 from google_health_viewer.analysis import (
     available_metrics,
     build_daily_progress_snapshot,
@@ -26,8 +25,8 @@ from google_health_viewer.constants import DATA_TYPES
 from google_health_viewer.utils import extract_source, extract_times, parse_timestamp
 
 
-# Android Nano retrieval targets. These are evidence-only estimates: ML Kit performs
-# the authoritative count on the complete request (system + question + evidence).
+# Evidence-only targets. ML Kit performs the authoritative token count on the
+# complete request after system instructions and the user's question are added.
 NANO_EVIDENCE_TARGETS = {
     "specific_relation": 700,
     "specific": 900,
@@ -37,6 +36,30 @@ NANO_EVIDENCE_TARGETS = {
 NANO_ABSOLUTE_EVIDENCE_LIMIT = 2200
 ASSOCIATION_MIN_PAIRED_DAYS = 10
 ASSOCIATION_REPORTING_THRESHOLD = 0.4
+
+DOMAIN_TYPES = {
+    "activity": {
+        "steps", "distance", "floors", "active-energy-burned", "total-calories",
+        "active-minutes", "active-zone-minutes", "time-in-heart-rate-zone",
+        "calories-in-heart-rate-zone", "activity-level", "sedentary-period",
+        "daily-vo2-max", "vo2-max", "run-vo2-max", "swim-lengths-data", "altitude",
+    },
+    "sleep": {"sleep"},
+    "heart": {
+        "heart-rate", "daily-resting-heart-rate", "daily-heart-rate-variability",
+        "heart-rate-variability", "daily-heart-rate-zones", "electrocardiogram",
+        "irregular-rhythm-notification",
+    },
+    "vitals": {
+        "daily-oxygen-saturation", "oxygen-saturation", "daily-respiratory-rate",
+        "respiratory-rate-sleep-summary", "daily-sleep-temperature-derivations",
+        "core-body-temperature", "blood-pressure", "blood-glucose",
+    },
+    "weight": {"weight", "body-fat", "height"},
+    "workouts": {"exercise"},
+    "nutrition": {"nutrition-log", "hydration-log"},
+}
+DOMAIN_ORDER = ("activity", "sleep", "heart", "vitals", "weight", "workouts", "nutrition", "other")
 
 
 class JsonStore:
@@ -57,10 +80,10 @@ class JsonStore:
     ) -> list[dict[str, Any]]:
         rows = list(self._by_type.get(data_type, ()))
         if start:
-            rows = [r for r in rows if not r.get("start_time") or r["start_time"] >= start]
+            rows = [row for row in rows if not row.get("start_time") or row["start_time"] >= start]
         if end:
-            rows = [r for r in rows if not r.get("start_time") or r["start_time"] < end]
-        rows.sort(key=lambda r: r.get("start_time") or "", reverse=newest)
+            rows = [row for row in rows if not row.get("start_time") or row["start_time"] < end]
+        rows.sort(key=lambda row: row.get("start_time") or "", reverse=newest)
         rows = rows[:limit]
         if newest:
             rows.reverse()
@@ -68,7 +91,7 @@ class JsonStore:
 
 
 class SQLiteStore:
-    """Query Android's local archive lazily instead of copying it through JNI/JSON."""
+    """Read Android SQLite lazily, one bounded data type at a time."""
 
     def __init__(self, database_path: str):
         self._connection = sqlite3.connect(database_path, timeout=10.0)
@@ -105,7 +128,7 @@ class SQLiteStore:
         """
         args.append(safe_limit)
         rows = self._connection.execute(sql, args).fetchall()
-        result = []
+        result: list[dict[str, Any]] = []
         for row in rows:
             try:
                 payload = json.loads(row["payload"])
@@ -134,9 +157,8 @@ def _selected(source: Any, keys: tuple[str, ...]) -> dict[str, Any]:
 
 
 def _estimated_tokens(value: Any) -> int:
-    """Conservative JSON estimate; ML Kit performs the authoritative count later."""
-    compact = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-    return max(1, math.ceil(len(compact) / 3.0))
+    text = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    return max(1, math.ceil(len(text) / 3.0))
 
 
 def _normalise_text(value: str) -> str:
@@ -146,75 +168,45 @@ def _normalise_text(value: str) -> str:
     return " ".join(value.split())
 
 
-# Concepts are ordered so a more specific phrase (e.g. resting heart rate) wins
-# before a generic one (heart rate). Each concept resolves to one preferred data
-# type for retrieval, avoiding duplicate raw/daily representations of the same idea.
+def _domain_for(data_type: str) -> str:
+    for domain, values in DOMAIN_TYPES.items():
+        if data_type in values:
+            return domain
+    return "other"
+
+
 QUESTION_CONCEPTS: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = (
     (
         "resting_heart_rate",
         ("daily-resting-heart-rate",),
         (
-            "resting heart rate",
-            "resting hr",
-            "heart rate at rest",
-            "frequenza cardiaca a riposo",
-            "battito a riposo",
-            "fc a riposo",
+            "resting heart rate", "resting hr", "heart rate at rest",
+            "frequenza cardiaca a riposo", "battito a riposo", "fc a riposo",
         ),
     ),
     (
         "hrv",
         ("daily-heart-rate-variability", "heart-rate-variability"),
         (
-            "hrv",
-            "heart rate variability",
-            "heart-rate variability",
-            "variabilita cardiaca",
-            "variabilita della frequenza cardiaca",
+            "hrv", "heart rate variability", "heart-rate variability",
+            "variabilita cardiaca", "variabilita della frequenza cardiaca",
         ),
     ),
     (
         "active_energy",
         ("active-energy-burned",),
-        (
-            "active calories",
-            "active calorie",
-            "active energy",
-            "calorie attive",
-            "energia attiva",
-            "calorie bruciate attive",
-        ),
+        ("active calories", "active calorie", "active energy", "calorie attive", "energia attiva"),
     ),
-    (
-        "total_calories",
-        ("total-calories",),
-        ("total calories", "calorie totali", "energia totale"),
-    ),
+    ("total_calories", ("total-calories",), ("total calories", "calorie totali", "energia totale")),
     (
         "heart_rate",
         ("daily-resting-heart-rate", "heart-rate"),
         ("heart rate", "battito cardiaco", "frequenza cardiaca", "bpm"),
     ),
-    (
-        "sleep",
-        ("sleep",),
-        ("sleep", "sonno", "dormito", "dormire", "sleep duration", "durata sonno"),
-    ),
-    (
-        "steps",
-        ("steps",),
-        ("steps", "step count", "passi", "numero passi"),
-    ),
-    (
-        "distance",
-        ("distance",),
-        ("distance", "distanza", "chilometri", "kilometers", "km"),
-    ),
-    (
-        "active_minutes",
-        ("active-minutes",),
-        ("active minutes", "minuti attivi"),
-    ),
+    ("sleep", ("sleep",), ("sleep", "sonno", "dormito", "dormire", "durata sonno")),
+    ("steps", ("steps",), ("steps", "step count", "passi", "numero passi")),
+    ("distance", ("distance",), ("distance", "distanza", "chilometri", "kilometers", "km")),
+    ("active_minutes", ("active-minutes",), ("active minutes", "minuti attivi")),
     (
         "zone_minutes",
         ("active-zone-minutes",),
@@ -235,36 +227,12 @@ QUESTION_CONCEPTS: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = (
         ("daily-sleep-temperature-derivations", "core-body-temperature"),
         ("temperature", "temperatura", "sleep temperature", "temperatura sonno"),
     ),
-    (
-        "vo2",
-        ("daily-vo2-max", "vo2-max", "run-vo2-max"),
-        ("vo2", "vo2 max", "vo2max"),
-    ),
-    (
-        "weight",
-        ("weight",),
-        ("weight", "peso"),
-    ),
-    (
-        "body_fat",
-        ("body-fat",),
-        ("body fat", "massa grassa", "grasso corporeo"),
-    ),
-    (
-        "exercise",
-        ("exercise",),
-        ("exercise", "workout", "workouts", "allenamento", "allenamenti", "esercizio"),
-    ),
-    (
-        "nutrition",
-        ("nutrition-log",),
-        ("nutrition", "food", "alimentazione", "nutrizione", "cibo"),
-    ),
-    (
-        "hydration",
-        ("hydration-log",),
-        ("hydration", "water", "idratazione", "acqua"),
-    ),
+    ("vo2", ("daily-vo2-max", "vo2-max", "run-vo2-max"), ("vo2", "vo2 max", "vo2max")),
+    ("weight", ("weight",), ("weight", "peso")),
+    ("body_fat", ("body-fat",), ("body fat", "massa grassa", "grasso corporeo")),
+    ("exercise", ("exercise",), ("exercise", "workout", "workouts", "allenamento", "allenamenti")),
+    ("nutrition", ("nutrition-log",), ("nutrition", "food", "alimentazione", "nutrizione", "cibo")),
+    ("hydration", ("hydration-log",), ("hydration", "water", "idratazione", "acqua")),
 )
 
 DOMAIN_ALIASES = {
@@ -278,9 +246,9 @@ DOMAIN_ALIASES = {
 }
 
 RELATION_WORDS = (
-    "correlation", "correlazione", "correlato", "correlata", "relationship",
-    "relation", "relazione", "association", "associazione", "legame", "linked",
-    "collegato", "collegata", "influenza", "influence", "affect", "causa", "cause",
+    "correlation", "correlazione", "correlato", "correlata", "relationship", "relation",
+    "relazione", "association", "associazione", "legame", "linked", "collegato", "collegata",
+    "influenza", "influence", "affect", "causa", "cause",
 )
 TREND_WORDS = (
     "trend", "andamento", "evoluzione", "cambiamento", "changed", "change",
@@ -301,7 +269,6 @@ def _contains_phrase(text: str, phrase: str) -> bool:
 
 
 def _contains_any(text: str, phrases: tuple[str, ...]) -> bool:
-    # A few intent words are stems ("aument", "dimin", ...), so allow token prefix.
     tokens = text.split()
     for phrase in phrases:
         normalised = _normalise_text(phrase)
@@ -313,54 +280,55 @@ def _contains_any(text: str, phrases: tuple[str, ...]) -> bool:
     return False
 
 
-def _all_compact_metrics(compact: dict[str, Any]) -> list[dict[str, Any]]:
-    result: list[dict[str, Any]] = []
-    for domain, metrics in (compact.get("domains") or {}).items():
-        if not isinstance(metrics, list):
-            continue
-        for metric in metrics:
-            if isinstance(metric, dict):
-                row = dict(metric)
-                row.setdefault("domain", str(domain))
-                result.append(row)
-    return result
-
-
 def _question_selection(
     question: str,
-    compact: dict[str, Any],
+    snapshot: dict[str, Any],
 ) -> tuple[list[str], list[str], list[str], str]:
     text = _normalise_text(question)
-    metrics = _all_compact_metrics(compact)
-    available_types = {str(metric.get("data_type", "")) for metric in metrics}
-    type_domain = {
-        str(metric.get("data_type", "")): str(metric.get("domain", "other"))
-        for metric in metrics
+    available_types = {
+        str(metric.get("data_type", ""))
+        for metric in snapshot.get("metrics", [])
+        if isinstance(metric, dict) and metric.get("data_type")
     }
     today_intent = _contains_any(text, TODAY_WORDS)
 
     mentioned: list[tuple[int, str, str]] = []
+    used_concepts: set[str] = set()
     for concept, preferred_types, aliases in QUESTION_CONCEPTS:
-        best_position: int | None = None
+        # "heart rate" is inside both "heart rate variability" and "resting heart
+        # rate". Once a specific concept matched, do not add generic heart rate too.
+        if concept == "heart_rate" and {"hrv", "resting_heart_rate"}.intersection(used_concepts):
+            continue
+        positions = []
         for alias in aliases:
             alias_n = _normalise_text(alias)
             position = f" {text} ".find(f" {alias_n} ")
-            if position >= 0 and (best_position is None or position < best_position):
-                best_position = position
-        if best_position is None:
+            if position >= 0:
+                positions.append(position)
+        if not positions:
             continue
         candidates = list(preferred_types)
         if concept == "heart_rate" and today_intent:
             candidates = ["heart-rate", "daily-resting-heart-rate"]
         chosen = next((data_type for data_type in candidates if data_type in available_types), None)
         if chosen:
-            mentioned.append((best_position, chosen, concept))
+            mentioned.append((min(positions), chosen, concept))
+            used_concepts.add(concept)
 
-    # Also recognise exact labels / API keys not already covered by aliases.
-    for metric in metrics:
+    covered_types = {
+        data_type
+        for concept, preferred_types, _aliases in QUESTION_CONCEPTS
+        if concept in used_concepts
+        for data_type in preferred_types
+    }
+    # Fallback for less common metrics: recognise exact API keys / labels, but do
+    # not add the raw twin of a concept already matched above.
+    for metric in snapshot.get("metrics", []):
+        if not isinstance(metric, dict):
+            continue
         data_type = str(metric.get("data_type", ""))
         label = str(metric.get("label", ""))
-        if not data_type or any(item[1] == data_type for item in mentioned):
+        if not data_type or data_type in covered_types or any(item[1] == data_type for item in mentioned):
             continue
         aliases = (data_type.replace("-", " "), label)
         positions = [
@@ -381,20 +349,25 @@ def _question_selection(
     selected_domains: list[str] = []
     for domain, aliases in DOMAIN_ALIASES.items():
         if any(_contains_phrase(text, alias) for alias in aliases):
-            if domain not in selected_domains:
-                selected_domains.append(domain)
+            selected_domains.append(domain)
     for data_type in selected_types:
-        domain = type_domain.get(data_type)
-        if domain and domain not in selected_domains:
+        domain = _domain_for(data_type)
+        if domain not in selected_domains:
             selected_domains.append(domain)
 
     intents: list[str] = []
-    if _contains_any(text, RELATION_WORDS): intents.append("association")
-    if _contains_any(text, TREND_WORDS): intents.append("trend")
-    if _contains_any(text, ANOMALY_WORDS): intents.append("anomaly")
-    if _contains_any(text, COMPARISON_WORDS): intents.append("comparison")
-    if today_intent: intents.append("today")
-    if _contains_any(text, GENERAL_WORDS): intents.append("general")
+    if _contains_any(text, RELATION_WORDS):
+        intents.append("association")
+    if _contains_any(text, TREND_WORDS):
+        intents.append("trend")
+    if _contains_any(text, ANOMALY_WORDS):
+        intents.append("anomaly")
+    if _contains_any(text, COMPARISON_WORDS):
+        intents.append("comparison")
+    if today_intent:
+        intents.append("today")
+    if _contains_any(text, GENERAL_WORDS):
+        intents.append("general")
 
     if "association" in intents and len(selected_types) >= 2:
         mode = "specific_relation"
@@ -407,11 +380,24 @@ def _question_selection(
     return selected_types, selected_domains, intents, mode
 
 
-def _nano_metric(metric: dict[str, Any], *, lean: bool = False) -> dict[str, Any]:
-    result = _selected(
-        metric,
-        ("data_type", "label", "metric", "unit", "summary_scope", "data_role", "domain"),
-    )
+def _coverage_rows(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {
+        str(item.get("data_type", "")): item
+        for item in (snapshot.get("requested_interval_coverage") or {}).get("metrics", [])
+        if isinstance(item, dict)
+    }
+
+
+def _compact_metric(
+    metric: dict[str, Any],
+    coverage_row: dict[str, Any] | None,
+    *,
+    lean: bool = False,
+) -> dict[str, Any]:
+    data_type = str(metric.get("data_type", ""))
+    result = _selected(metric, ("data_type", "label", "metric", "unit", "summary_scope", "data_role"))
+    result["domain"] = _domain_for(data_type)
+
     summary = _selected(
         metric.get("summary"),
         ("count", "latest", "mean", "median", "minimum", "maximum", "trend_percent", "anomaly_count"),
@@ -420,53 +406,177 @@ def _nano_metric(metric: dict[str, Any], *, lean: bool = False) -> dict[str, Any
         result["summary"] = summary
 
     coverage = _selected(
-        metric.get("coverage"),
-        ("observed_calendar_days", "coverage_percent", "records_considered", "missing_calendar_days", "longest_missing_run_days"),
+        coverage_row,
+        (
+            "observed_calendar_days", "coverage_percent", "records_considered",
+            "missing_calendar_days", "longest_missing_run_days", "data_role",
+        ),
     )
     if coverage:
         result["coverage"] = coverage
 
-    today = _selected(
-        metric.get("today"),
+    temporal = _selected(
+        metric.get("temporal_context"),
         ("status", "today_so_far", "same_time_mean", "same_time_days", "same_time_percent"),
     )
-    if today:
-        result["today"] = today
+    if temporal:
+        result["today"] = temporal
 
     if not lean:
-        evidence = metric.get("evidence") or {}
-        compact_evidence: dict[str, Any] = {}
+        derived = metric.get("derived_evidence") or {}
+        evidence: dict[str, Any] = {}
         matched = _selected(
-            evidence.get("matched_change"),
-            ("window_days", "recent_days", "recent_mean", "previous_days", "previous_mean", "percent_change", "standardized_change"),
+            derived.get("matched_recent_comparison"),
+            (
+                "window_days", "recent_days", "recent_mean", "previous_days", "previous_mean",
+                "percent_change", "standardized_change",
+            ),
         )
         if matched:
-            compact_evidence["change"] = matched
+            evidence["change"] = matched
         trend = _selected(
-            evidence.get("trend"),
+            derived.get("trend"),
             ("window_days", "observed_days", "direction", "percent_per_week", "r_squared"),
         )
         if trend:
-            compact_evidence["trend"] = trend
+            evidence["trend"] = trend
         anomaly = _selected(
-            evidence.get("anomaly"),
+            derived.get("robust_anomaly_check"),
             ("window_days", "baseline_samples", "baseline_median", "latest_date", "latest_robust_z"),
         )
         if anomaly:
-            compact_evidence["anomaly"] = anomaly
-        baselines = evidence.get("personal_baselines")
+            evidence["anomaly"] = anomaly
+        baselines = derived.get("personal_baselines") or {}
         if isinstance(baselines, dict):
             compact_baselines = {
-                key: _selected(value, ("samples", "observed_days", "mean", "standard_deviation"))
+                key: _selected(value, ("observed_days", "samples", "mean", "standard_deviation"))
                 for key, value in baselines.items()
                 if key in {"7_days", "28_days", "90_days"} and isinstance(value, dict)
             }
             compact_baselines = {key: value for key, value in compact_baselines.items() if value}
             if compact_baselines:
-                compact_evidence["baselines"] = compact_baselines
-        if compact_evidence:
-            result["evidence"] = compact_evidence
+                evidence["baselines"] = compact_baselines
+        if evidence:
+            result["evidence"] = evidence
     return result
+
+
+def _metric_importance(snapshot: dict[str, Any]) -> dict[str, float]:
+    result: dict[str, float] = defaultdict(float)
+    for insight in snapshot.get("candidate_insights", []):
+        if not isinstance(insight, dict):
+            continue
+        try:
+            score = float(insight.get("relevance_score") or 0.0)
+        except (TypeError, ValueError):
+            score = 0.0
+        for data_type in insight.get("data_types") or []:
+            result[str(data_type)] = max(result[str(data_type)], score)
+    return dict(result)
+
+
+def _selected_metrics(
+    snapshot: dict[str, Any],
+    selected_types: list[str],
+    selected_domains: list[str],
+    mode: str,
+    *,
+    lean: bool,
+) -> list[dict[str, Any]]:
+    rows = [item for item in snapshot.get("metrics", []) if isinstance(item, dict)]
+    importance = _metric_importance(snapshot)
+    rows.sort(
+        key=lambda item: (
+            -importance.get(str(item.get("data_type", "")), 0.0),
+            str(item.get("label", item.get("data_type", ""))),
+        )
+    )
+    if mode in {"specific", "specific_relation"}:
+        wanted = set(selected_types)
+        rows = [row for row in rows if str(row.get("data_type", "")) in wanted][:3]
+    elif mode == "domain":
+        wanted_domains = set(selected_domains)
+        rows = [row for row in rows if _domain_for(str(row.get("data_type", ""))) in wanted_domains]
+        rows = rows[: (4 if lean else 6)]
+    else:
+        per_domain = 1 if lean else 2
+        grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for row in rows:
+            grouped[_domain_for(str(row.get("data_type", "")))].append(row)
+        rows = []
+        for domain in DOMAIN_ORDER:
+            rows.extend(grouped.get(domain, [])[:per_domain])
+
+    coverage = _coverage_rows(snapshot)
+    return [
+        _compact_metric(row, coverage.get(str(row.get("data_type", ""))), lean=lean)
+        for row in rows
+    ]
+
+
+def _selected_insights(
+    snapshot: dict[str, Any],
+    selected_types: list[str],
+    mode: str,
+    *,
+    lean: bool,
+) -> list[dict[str, Any]]:
+    raw = [item for item in snapshot.get("candidate_insights", []) if isinstance(item, dict)]
+    if selected_types:
+        wanted = set(selected_types)
+        raw = [
+            item
+            for item in raw
+            if wanted.intersection(str(value) for value in (item.get("data_types") or []))
+        ]
+    limit = {
+        "specific_relation": 2 if lean else 4,
+        "specific": 3 if lean else 5,
+        "domain": 4 if lean else 6,
+        "general": 5 if lean else 8,
+    }[mode]
+    return [
+        _selected(
+            item,
+            ("evidence_id", "kind", "data_types", "headline", "relevance_score", "confidence", "caveat"),
+        )
+        for item in raw[:limit]
+    ]
+
+
+def _selected_associations(
+    snapshot: dict[str, Any],
+    selected_types: list[str],
+    mode: str,
+    *,
+    lean: bool,
+) -> list[dict[str, Any]]:
+    raw = [item for item in snapshot.get("associations", []) if isinstance(item, dict)]
+    wanted = set(selected_types)
+    if mode == "specific_relation" and len(wanted) >= 2:
+        raw = [
+            item
+            for item in raw
+            if {str(item.get("left_data_type", "")), str(item.get("right_data_type", ""))}.issubset(wanted)
+        ]
+    elif wanted:
+        raw = [
+            item
+            for item in raw
+            if str(item.get("left_data_type", "")) in wanted
+            or str(item.get("right_data_type", "")) in wanted
+        ]
+    limit = 1 if lean else (2 if mode != "general" else 4)
+    return [
+        _selected(
+            item,
+            (
+                "left", "right", "left_data_type", "right_data_type", "r",
+                "paired_days", "timing", "reliability_score",
+            ),
+        )
+        for item in raw[:limit]
+    ]
 
 
 def _coverage_for_types(snapshot: dict[str, Any], selected_types: list[str]) -> dict[str, Any]:
@@ -474,9 +584,10 @@ def _coverage_for_types(snapshot: dict[str, Any], selected_types: list[str]) -> 
     result = _selected(
         coverage,
         (
-            "requested_start", "requested_end", "requested_calendar_days", "first_measurement_date",
-            "last_measurement_date", "calendar_days_with_measurements",
-            "calendar_days_with_measurements_percent", "scope_is_partially_observed",
+            "requested_start", "requested_end", "requested_calendar_days",
+            "first_measurement_date", "last_measurement_date",
+            "calendar_days_with_measurements", "calendar_days_with_measurements_percent",
+            "scope_is_partially_observed",
         ),
     )
     rows = [
@@ -543,7 +654,8 @@ def _pearson(pairs: list[tuple[float, float]]) -> float | None:
     right_mean = statistics.fmean(right)
     numerator = sum((x - left_mean) * (y - right_mean) for x, y in pairs)
     denominator = math.sqrt(
-        sum((x - left_mean) ** 2 for x in left) * sum((y - right_mean) ** 2 for y in right)
+        sum((x - left_mean) ** 2 for x in left)
+        * sum((y - right_mean) ** 2 for y in right)
     )
     return numerator / denominator if denominator > 1e-12 else None
 
@@ -557,18 +669,15 @@ def _association_result(pairs: list[tuple[float, float]], timing: str) -> dict[s
         "reporting_abs_r_threshold": ASSOCIATION_REPORTING_THRESHOLD,
     }
     if paired_days < ASSOCIATION_MIN_PAIRED_DAYS:
-        result["result"] = "not_calculated"
-        result["reason"] = "insufficient_overlapping_days"
+        result.update(result="not_calculated", reason="insufficient_overlapping_days")
         return result
     r = _pearson(pairs)
     if r is None:
-        result["result"] = "not_calculated"
-        result["reason"] = "insufficient_variation"
+        result.update(result="not_calculated", reason="insufficient_variation")
         return result
     result["r"] = round(r, 3)
     if abs(r) < ASSOCIATION_REPORTING_THRESHOLD:
-        result["result"] = "below_reporting_threshold"
-        result["reason"] = "absolute_correlation_below_0.4"
+        result.update(result="below_reporting_threshold", reason="absolute_correlation_below_0.4")
     else:
         result["result"] = "association_detected"
         result["reliability_score"] = round(abs(r) * min(1.0, paired_days / 30.0), 3)
@@ -583,18 +692,19 @@ def _relation_checks(
 ) -> list[dict[str, Any]]:
     if len(selected_types) < 2:
         return []
-    # A specific question should normally resolve to two concepts. Bound the work
-    # for ambiguous questions rather than generating every possible pair.
     chosen = selected_types[:3]
     labels = {spec.key: spec.label for spec in DATA_TYPES}
-    daily = {data_type: _daily_values_for_type(store, data_type, start, end) for data_type in chosen}
+    daily = {
+        data_type: _daily_values_for_type(store, data_type, start, end)
+        for data_type in chosen
+    }
     result: list[dict[str, Any]] = []
-    for left_index, left_type in enumerate(chosen):
-        for right_type in chosen[left_index + 1 :]:
+    for index, left_type in enumerate(chosen):
+        for right_type in chosen[index + 1 :]:
             left = daily.get(left_type, {})
             right = daily.get(right_type, {})
-            shared = sorted(set(left) & set(right))
-            same_pairs = [(left[day], right[day]) for day in shared]
+            same_days = sorted(set(left) & set(right))
+            same_pairs = [(left[day], right[day]) for day in same_days]
             left_lag_pairs = [
                 (value, right[day + timedelta(days=1)])
                 for day, value in left.items()
@@ -612,100 +722,17 @@ def _relation_checks(
                     "right_data_type": right_type,
                     "right": labels.get(right_type, right_type),
                     "same_day": _association_result(same_pairs, "same_day"),
-                    "left_precedes_right_by_one_day": _association_result(left_lag_pairs, "left_precedes_right_by_one_day"),
-                    "right_precedes_left_by_one_day": _association_result(right_lag_pairs, "right_precedes_left_by_one_day"),
+                    "left_precedes_right_by_one_day": _association_result(
+                        left_lag_pairs, "left_precedes_right_by_one_day"
+                    ),
+                    "right_precedes_left_by_one_day": _association_result(
+                        right_lag_pairs, "right_precedes_left_by_one_day"
+                    ),
                     "interpretation_rule": "association_only_not_causation",
                     "absence_rule": "an unreported association is not evidence that no relationship exists",
                 }
             )
     return result
-
-
-def _select_metrics(
-    compact: dict[str, Any],
-    selected_types: list[str],
-    selected_domains: list[str],
-    mode: str,
-    *,
-    lean: bool = False,
-) -> list[dict[str, Any]]:
-    metrics = _all_compact_metrics(compact)
-    if mode in {"specific", "specific_relation"}:
-        rows = [metric for metric in metrics if str(metric.get("data_type", "")) in selected_types]
-        maximum = 3
-    elif mode == "domain":
-        rows = [metric for metric in metrics if str(metric.get("domain", "")) in selected_domains]
-        maximum = 4 if lean else 6
-    else:
-        # Preserve breadth for a general analysis while bounding each domain.
-        per_domain = 1 if lean else 2
-        grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        for metric in metrics:
-            grouped[str(metric.get("domain", "other"))].append(metric)
-        rows = []
-        for domain in ("activity", "sleep", "heart", "vitals", "weight", "workouts", "nutrition", "other"):
-            rows.extend(grouped.get(domain, [])[:per_domain])
-        maximum = len(rows)
-    return [_nano_metric(metric, lean=lean) for metric in rows[:maximum]]
-
-
-def _select_insights(
-    compact: dict[str, Any],
-    selected_types: list[str],
-    mode: str,
-    *,
-    lean: bool = False,
-) -> list[dict[str, Any]]:
-    raw = [item for item in compact.get("strongest_evidence", []) if isinstance(item, dict)]
-    if selected_types:
-        wanted = set(selected_types)
-        relevant = [
-            item for item in raw
-            if wanted.intersection(str(value) for value in (item.get("data_types") or []))
-        ]
-    else:
-        relevant = raw
-    limit = {
-        "specific_relation": 2 if lean else 4,
-        "specific": 3 if lean else 5,
-        "domain": 4 if lean else 6,
-        "general": 5 if lean else 8,
-    }[mode]
-    return [
-        _selected(item, ("evidence_id", "kind", "data_types", "headline", "relevance_score", "confidence", "caveat"))
-        for item in relevant[:limit]
-    ]
-
-
-def _select_associations(
-    compact: dict[str, Any],
-    selected_types: list[str],
-    mode: str,
-    *,
-    lean: bool = False,
-) -> list[dict[str, Any]]:
-    raw = [item for item in compact.get("associations", []) if isinstance(item, dict)]
-    wanted = set(selected_types)
-    if mode == "specific_relation" and len(wanted) >= 2:
-        relevant = [
-            item for item in raw
-            if {str(item.get("left_data_type", "")), str(item.get("right_data_type", ""))}.issubset(wanted)
-        ]
-    elif wanted:
-        relevant = [
-            item for item in raw
-            if str(item.get("left_data_type", "")) in wanted or str(item.get("right_data_type", "")) in wanted
-        ]
-    else:
-        relevant = raw
-    limit = 1 if lean else (2 if mode != "general" else 4)
-    return [
-        _selected(
-            item,
-            ("left", "right", "left_data_type", "right_data_type", "r", "paired_days", "timing", "reliability_score"),
-        )
-        for item in relevant[:limit]
-    ]
 
 
 def _build_retrieval_packet(
@@ -717,17 +744,13 @@ def _build_retrieval_packet(
     *,
     lean: bool = False,
 ) -> dict[str, Any]:
-    compact = ensure_compact_evidence(snapshot)
-    selected_types, selected_domains, intents, mode = _question_selection(question, compact)
-    source_packet = compact.get("packet") or {}
+    selected_types, selected_domains, intents, mode = _question_selection(question, snapshot)
     target = NANO_EVIDENCE_TARGETS[mode]
-
     packet: dict[str, Any] = {
         "packet": {
             "health_evidence_present": True,
-            "pipeline_version": "android-question-retrieval-v1",
-            "source_pipeline_version": source_packet.get("pipeline_version"),
-            "analysis_scope": source_packet.get("analysis_scope"),
+            "pipeline_version": "android-question-retrieval-v2",
+            "analysis_scope": snapshot.get("analysis_scope"),
         },
         "retrieval": {
             "mode": mode,
@@ -737,13 +760,22 @@ def _build_retrieval_packet(
             "target_evidence_tokens": target,
             "absolute_evidence_limit": NANO_ABSOLUTE_EVIDENCE_LIMIT,
             "selection_is_deterministic": True,
+            "selection_source": "full_deterministic_snapshot",
         },
-        "period": compact.get("period") or {},
-        "observation": compact.get("observation") or {},
+        "period": snapshot.get("period") or {},
+        "observation": _selected(
+            snapshot.get("observation_context"),
+            (
+                "observed_at", "local_date", "local_time", "selected_period_includes_today",
+                "current_day_is_incomplete", "elapsed_day_percent",
+            ),
+        ),
         "coverage": _coverage_for_types(snapshot, selected_types),
-        "metrics": _select_metrics(compact, selected_types, selected_domains, mode, lean=lean),
-        "insights": _select_insights(compact, selected_types, mode, lean=lean),
-        "associations": _select_associations(compact, selected_types, mode, lean=lean),
+        "metrics": _selected_metrics(
+            snapshot, selected_types, selected_domains, mode, lean=lean
+        ),
+        "insights": _selected_insights(snapshot, selected_types, mode, lean=lean),
+        "associations": _selected_associations(snapshot, selected_types, mode, lean=lean),
         "rules": [
             "missing data are missing, never zero",
             "association does not imply causation",
@@ -770,8 +802,6 @@ def _fit_retrieval_packet(
     if _estimated_tokens(packet) > target:
         packet = _build_retrieval_packet(snapshot, question, store, start, end, lean=True)
 
-    # Progressive deterministic trimming. Relation checks and the relevant metrics
-    # are preserved for specific questions; generic evidence is discarded first.
     while _estimated_tokens(packet) > target and len(packet.get("insights", [])) > 1:
         packet["insights"].pop()
     while _estimated_tokens(packet) > target and len(packet.get("associations", [])) > 1:
@@ -784,8 +814,6 @@ def _fit_retrieval_packet(
         packet["metrics"].pop()
 
     if _estimated_tokens(packet) > NANO_ABSOLUTE_EVIDENCE_LIMIT:
-        # Hard safety limit: retain routing, coverage, directly relevant metrics and
-        # relation diagnostics; remove optional narrative evidence first.
         packet["insights"] = packet.get("insights", [])[:1]
         packet["associations"] = packet.get("associations", [])[:1]
         packet["metrics"] = packet.get("metrics", [])[:3]
@@ -884,11 +912,8 @@ def nano_evidence_from_sqlite(
     end: str,
     question: str,
 ) -> str:
-    """Build only the evidence relevant to one Android Nano question.
-
-    The rich deterministic snapshot is created and consumed entirely inside Python.
-    Kotlin receives only the small retrieval packet, avoiding a full snapshot
-    round-trip across the Python/JVM boundary.
+    """Build full deterministic evidence, retrieve only what the question needs,
+    and return only that small packet across the Python/JVM boundary.
     """
     store = SQLiteStore(database_path)
     try:
@@ -900,7 +925,7 @@ def nano_evidence_from_sqlite(
 
 
 def compact_evidence(evidence_json: str) -> str:
-    """Compatibility entry point: compact a rich snapshot as a general question."""
+    """Compatibility entry point for callers without a question."""
     snapshot = json.loads(evidence_json)
-    compact = _fit_retrieval_packet(snapshot, "")
-    return json.dumps(compact, ensure_ascii=False, separators=(",", ":"))
+    packet = _fit_retrieval_packet(snapshot, "")
+    return json.dumps(packet, ensure_ascii=False, separators=(",", ":"))
