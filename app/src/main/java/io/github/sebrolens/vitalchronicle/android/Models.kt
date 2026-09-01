@@ -81,7 +81,10 @@ fun parseMetricCards(json: String): List<MetricCard> {
                 if (spark != null) {
                     for (j in 0 until spark.length()) {
                         val pair = spark.optJSONArray(j)
-                        if (pair != null && pair.length() >= 2) add(pair.optDouble(1))
+                        if (pair != null && pair.length() >= 2) {
+                            val value = pair.optDouble(1, Double.NaN)
+                            if (value.isFinite()) add(value)
+                        }
                     }
                 }
             }
@@ -90,9 +93,9 @@ fun parseMetricCards(json: String): List<MetricCard> {
                     dataType = o.optString("data_type"),
                     label = o.optString("label"),
                     unit = o.optString("unit"),
-                    current = o.optDouble("current").takeUnless { it.isNaN() },
-                    baseline = o.optDouble("baseline").takeUnless { it.isNaN() },
-                    deltaPercent = o.optDouble("delta_percent").takeUnless { it.isNaN() },
+                    current = o.optDouble("current", Double.NaN).takeIf { it.isFinite() },
+                    baseline = o.optDouble("baseline", Double.NaN).takeIf { it.isFinite() },
+                    deltaPercent = o.optDouble("delta_percent", Double.NaN).takeIf { it.isFinite() },
                     completion = o.optBoolean("completion"),
                     valueDate = o.optString("value_date"),
                     sparkline = values,
