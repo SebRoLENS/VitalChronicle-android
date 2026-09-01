@@ -159,8 +159,12 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
                     status = "Deterministic analysis complete"
                 }
                 AiEngine.AUTOMATIC, AiEngine.GEMINI_NANO -> {
+                    status = "Compressing deterministic evidence for the on-device model…"
+                    val modelEvidence = withContext(Dispatchers.Default) {
+                        core.compactEvidence(evidence)
+                    }
                     try {
-                        val result = nano.answer(question, evidence) { status = it }
+                        val result = nano.answer(question, modelEvidence) { status = it }
                         aiAnswer = result.answer
                         aiModelName = result.model
                         status = "Analysis complete · ${result.engine}"
