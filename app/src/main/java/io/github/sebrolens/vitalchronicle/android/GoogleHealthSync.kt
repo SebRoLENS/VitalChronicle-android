@@ -27,19 +27,37 @@ class GoogleHealthSync(
         val requestedHistory = historyDays.coerceIn(1, DataRetention.GENERAL_DAYS)
         var total = 0
 
+        // This runs before any network request. In particular, yesterday's raw
+        // heart-rate samples disappear as soon as the app is opened/synced on a
+        // new day, before today's heart-rate request is made.
         database.pruneRetention(today, compact = false)
 
         specs.forEachIndexed { index, spec ->
             progress("${index + 1}/${specs.size} · ${spec.label}")
             database.setSyncStatus(spec.key, "running")
             try {
-                val latest = database.latestStart(spec.key)?.take(10)?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
                 val retainedDays = DataRetention.requestedDays(spec.key, requestedHistory)
                 val initial = today.minusDays((retainedDays - 1).toLong())
-                val start = if (latest != null && latest.isAfter(initial)) latest.minusDays(1) else initial
+                val start = if (DataRetention.isCurrentDayOnly(spec.key)) {
+                    // Do not ask Google Health for historical raw heart-rate data at
+                    // all. The server-side filter is always today 00:00 -> tomorrow
+                    // 00:00, so only samples belonging to the current local day can
+                    // be returned.
+                    today
+                } else {
+                    val latest = database.latestStart(spec.key)?.take(10)?.let {
+                        runCatching { LocalDate.parse(it) }.getOrNull()
+                    }
+                    if (latest != null && latest.isAfter(initial)) latest.minusDays(1) else initial
+                }
                 val pages = if (spec.operation == "daily_rollup") rollup(spec, start, today) else list(spec, start, today)
                 total += pages
-                database.setSyncStatus(spec.key, "ok", "$pages records · ${DataRetention.daysFor(spec.key)}d retention")
+                val retentionLabel = if (DataRetention.isCurrentDayOnly(spec.key)) {
+                    "today only"
+                } else {
+                    "${DataRetention.daysFor(spec.key)}d retention"
+                }
+                database.setSyncStatus(spec.key, "ok", "$pages records · $retentionLabel")
             } catch (e: GoogleAuthorizationRequiredException) {
                 database.setSyncStatus(spec.key, "error", e.message.orEmpty())
                 throw e
