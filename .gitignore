@@ -1,0 +1,17 @@
+.gradle/
+.idea/
+local.properties
+**/build/
+*.iml
+
+# Generated from the canonical VitalChronicle desktop core during CI/build.
+app/src/main/python/google_health_viewer/
+app/src/main/assets/shared_core_revision.json
+
+# Credentials and local health data must never be committed.
+client_secret*.json
+authorized_user*.json
+*.sqlite3
+*.db
+*.jks
+*.keystore
