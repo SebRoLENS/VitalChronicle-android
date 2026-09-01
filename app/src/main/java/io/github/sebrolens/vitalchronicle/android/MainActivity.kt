@@ -225,7 +225,7 @@ enum class Screen(val label: String, val icon: ImageVector) {
         item { OutlinedTextField(question,{question=it},label={Text("Ask about your data")},modifier=Modifier.fillMaxWidth(),minLines=3,maxLines=7) }
         item { Button(onClick={vm.analyse(question)},enabled=!vm.busy && vm.counts.isNotEmpty(),modifier=Modifier.fillMaxWidth()) { Icon(Icons.Default.AutoAwesome,null); Spacer(Modifier.width(8.dp)); Text("Analyse locally") } }
         if(vm.busy) item { Card { Row(Modifier.padding(14.dp), verticalAlignment=Alignment.CenterVertically) { CircularProgressIndicator(Modifier.size(24.dp),strokeWidth=2.dp); Spacer(Modifier.width(12.dp)); Column { Text("VitalChronicle is working",fontWeight=FontWeight.SemiBold); Text(vm.status,style=MaterialTheme.typography.bodySmall) } } } }
-        if(vm.aiAnswer.isNotBlank()) item { Card { SelectionContainer { Text(vm.aiAnswer,Modifier.padding(16.dp)) } } }
+        if(vm.aiAnswer.isNotBlank()) item { Card { SelectionContainer { MarkdownAnswer(vm.aiAnswer,Modifier.padding(16.dp)) } } }
         vm.lastError?.let { err -> item { ErrorCard(err) } }
     }
 }
