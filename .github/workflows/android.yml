@@ -168,9 +168,11 @@ jobs:
         shell: bash
         run: |
           apk=app/build/outputs/apk/release/app-release.apk
+          apksigner="$ANDROID_HOME/build-tools/35.0.0/apksigner"
           test -f "$apk"
-          apksigner verify --verbose --print-certs "$apk"
-          sha1=$(apksigner verify --print-certs "$apk" | sed -n 's/^Signer #1 certificate SHA-1 digest: //p' | head -n 1)
+          test -x "$apksigner"
+          "$apksigner" verify --verbose --print-certs "$apk"
+          sha1=$("$apksigner" verify --print-certs "$apk" | sed -n 's/^Signer #1 certificate SHA-1 digest: //p' | head -n 1)
           test -n "$sha1"
           echo "sha1=$sha1" >> "$GITHUB_OUTPUT"
           echo "### Android release signing" >> "$GITHUB_STEP_SUMMARY"
