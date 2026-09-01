@@ -19,8 +19,9 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
     val database = HealthDatabase(app)
     private val core = PythonCore()
     val vault = CredentialVault(app)
-    private val oauth = OAuthManager(vault)
-    private val syncer = GoogleHealthSync(database, core, oauth)
+    private val http = AndroidHttpClient(app)
+    private val oauth = OAuthManager(vault, http)
+    private val syncer = GoogleHealthSync(database, core, oauth, http)
     private val nano = GeminiNanoEngine()
     val specs: List<DataTypeSpec> by lazy { core.specs() }
 
