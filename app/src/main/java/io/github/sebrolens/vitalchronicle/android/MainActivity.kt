@@ -1,22 +1,24 @@
 package io.github.sebrolens.vitalchronicle.android
 
 import android.app.Activity
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -26,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -78,7 +81,13 @@ enum class Screen(val label: String, val icon: ImageVector) {
                 icon = Icons.Default.Favorite
             )
         }
-        if(vm.metrics.isEmpty()) item { EmptyCard("No local measurements yet", "Connect Google and run a sync. Health records stay on this device.") }
+        if(vm.metrics.isEmpty()) item {
+            EmptyCard(
+                if(vm.counts.isEmpty()) "No local measurements yet" else "Building local summaries",
+                if(vm.counts.isEmpty()) "Connect Google and run a sync. Health records stay on this device." else "Your downloaded health records are stored locally. VitalChronicle is preparing a bounded summary dataset instead of loading the entire archive into memory."
+            )
+        }
+        vm.lastError?.let { err -> item { ErrorCard(err) } }
         items(vm.metrics, key={it.dataType}) { MetricCardView(it) }
         item { Button(onClick=vm::sync, enabled=!vm.busy && vm.googleConnected, modifier=Modifier.fillMaxWidth()) { Icon(Icons.Default.Sync,null); Spacer(Modifier.width(8.dp)); Text("Download / update") } }
     }
@@ -100,8 +109,10 @@ enum class Screen(val label: String, val icon: ImageVector) {
 }
 
 @Composable fun Sparkline(values: List<Double>, color: Color, modifier: Modifier=Modifier) { Canvas(modifier) {
-    val lo=values.minOrNull()?:0.0; val hi=values.maxOrNull()?:1.0; val span=max(1e-9,hi-lo); val step=size.width/(values.size-1)
-    val path=Path(); values.forEachIndexed { i,v -> val x=i*step; val y=size.height-((v-lo)/span*size.height).toFloat(); if(i==0) path.moveTo(x,y) else path.lineTo(x,y) }
+    val finite = values.filter { it.isFinite() }
+    if (finite.size < 2) return@Canvas
+    val lo=finite.minOrNull()?:0.0; val hi=finite.maxOrNull()?:1.0; val span=max(1e-9,hi-lo); val step=size.width/(finite.size-1)
+    val path=Path(); finite.forEachIndexed { i,v -> val x=i*step; val y=size.height-((v-lo)/span*size.height).toFloat(); if(i==0) path.moveTo(x,y) else path.lineTo(x,y) }
     drawPath(path,color,style=androidx.compose.ui.graphics.drawscope.Stroke(width=3f))
 } }
 
@@ -135,21 +146,93 @@ enum class Screen(val label: String, val icon: ImageVector) {
 }
 
 @Composable fun SettingsScreen(vm: VitalViewModel) {
+    var googleSetupOpen by remember { mutableStateOf(!vm.googleConnected) }
+    val requiredScopes = remember(vm.specs) { vm.specs.map { it.scope }.filter { it.isNotBlank() }.distinct().sorted() }
     val authorizationLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK && result.data != null) vm.completeGoogleAuthorization(result.data)
         else vm.googleAuthorizationCancelled()
     }
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding=PaddingValues(16.dp), verticalArrangement=Arrangement.spacedBy(14.dp)) {
-        item { SectionTitle("Google Health", "Android uses Google Identity Services directly. No OAuth client secret, browser callback or localhost server is stored in the app.") }
+        item { SectionTitle("Google Health", "Android setup is fully independent from VitalChronicle desktop. No desktop OAuth configuration, client-secret JSON, browser callback or localhost server is required.") }
         item {
-            Card { Column(Modifier.padding(16.dp), verticalArrangement=Arrangement.spacedBy(8.dp)) {
-                Row(verticalAlignment=Alignment.CenterVertically) { Icon(Icons.Default.VerifiedUser,null,tint=MaterialTheme.colorScheme.primary); Spacer(Modifier.width(10.dp)); Text("Android OAuth client configuration",fontWeight=FontWeight.SemiBold) }
-                Text("In Google Cloud, create an OAuth client of type Android for the package and SHA-1 below. Android Studio debug builds and production-signed builds have different SHA-1 fingerprints, so register each signing certificate you use.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-                SelectionContainer { Text("Package: ${vm.googlePackageName}\nSHA-1: ${vm.googleSigningSha1}",style=MaterialTheme.typography.bodySmall,fontWeight=FontWeight.Medium) }
+            Card { Column {
+                ListItem(
+                    headlineContent={Text("Google Cloud setup assistant",fontWeight=FontWeight.SemiBold)},
+                    supportingContent={Text(if(vm.googleConnected) "Google is connected. Reopen this guide whenever you need to configure another Android build." else "First time? Follow these steps in order. No previous Google Cloud knowledge is assumed.")},
+                    leadingContent={Icon(Icons.Default.Cloud,null,tint=MaterialTheme.colorScheme.primary)},
+                    trailingContent={Icon(if(googleSetupOpen) Icons.Default.ExpandLess else Icons.Default.ExpandMore,null)},
+                    modifier=Modifier.clickable{googleSetupOpen=!googleSetupOpen}
+                )
+                AnimatedVisibility(googleSetupOpen) {
+                    Column(Modifier.padding(start=14.dp,end=14.dp,bottom=16.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
+                        Text("Use the same Google Cloud project for every step below. If you previously configured VitalChronicle desktop you may reuse that project, but this guide does not require or assume it.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+
+                        GoogleSetupStep(
+                            1,
+                            "Create or select a Google Cloud project",
+                            "Open Google Cloud, sign in, and create a project if you do not already have one. A name such as ‘VitalChronicle’ is fine; ‘No organization’ is fine for a personal account. After creating it, make sure that project stays selected for all following steps.",
+                            "Create / select project",
+                            "https://console.cloud.google.com/projectcreate"
+                        )
+                        GoogleSetupStep(
+                            2,
+                            "Enable the Google Health API",
+                            "Open the API Library for the selected project. If Google Health API is not already enabled, tap Enable. The service used by VitalChronicle is health.googleapis.com.",
+                            "Open Google Health API",
+                            "https://console.cloud.google.com/apis/library/health.googleapis.com"
+                        )
+                        GoogleSetupStep(
+                            3,
+                            "Configure Google Auth Platform",
+                            "Open Google Auth Platform. If it says that the platform is not configured, choose Get started. Use ‘VitalChronicle’ as the app name, choose your email as the support email, select External for a normal personal Google account, enter your contact email, accept the Google API Services User Data Policy, then create the configuration. ‘Internal’ is only appropriate for a managed Google Workspace organization.",
+                            "Open Auth overview",
+                            "https://console.cloud.google.com/auth/overview"
+                        )
+                        GoogleSetupStep(
+                            4,
+                            "Add your Google account as a test user",
+                            "If Audience shows External and Publishing status is Testing, open Test users → Add users and enter the exact Google account you will connect in VitalChronicle. If the app is already in Production, this step can be skipped.",
+                            "Open Audience",
+                            "https://console.cloud.google.com/auth/audience"
+                        )
+                        GoogleSetupStep(
+                            5,
+                            "Allow the Google Health data scopes",
+                            "Open Data Access → Add or remove scopes. Filter for Google Health API, select the read scopes VitalChronicle requests below, then Update and Save. Only health-data read access is requested.",
+                            "Open Data Access",
+                            "https://console.cloud.google.com/auth/scopes"
+                        ) {
+                            SelectionContainer {
+                                Text(requiredScopes.joinToString("\n") { "• $it" },style=MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                        GoogleSetupStep(
+                            6,
+                            "Create the Android OAuth client",
+                            "Open Clients → Create client. Choose Android as the application type. Set the name to ‘VitalChronicle Android’, then enter exactly the package name and SHA-1 shown below. Do not create a Desktop or Web client for this Android flow, and do not download a JSON secret.",
+                            "Open OAuth clients",
+                            "https://console.cloud.google.com/auth/clients"
+                        ) {
+                            SelectionContainer {
+                                Text("Name: VitalChronicle Android\nPackage name: ${vm.googlePackageName}\nSHA-1: ${vm.googleSigningSha1}",style=MaterialTheme.typography.bodySmall,fontWeight=FontWeight.Medium)
+                            }
+                        }
+                        GoogleSetupStep(
+                            7,
+                            "Connect the account in VitalChronicle",
+                            "Return to this screen and tap Connect below. Choose the same account you added as a test user and approve the requested Google Health permissions. After the connection succeeds, use Download / update to populate the local archive."
+                        )
+                        GoogleSetupStep(
+                            8,
+                            "If you use Android Studio or another signed build",
+                            "OAuth identifies Android apps using package name + signing-certificate SHA-1. A local Android Studio debug build, a GitHub APK, and a Play Store build can therefore have different SHA-1 values. Register an Android OAuth client for each signing certificate you actually use. Always copy the SHA-1 displayed by the installed build. With Play App Signing, the production SHA-1 comes from Play Console → App integrity. Normal users of a future centrally configured Play release should only need to tap Connect; this full Cloud procedure is mainly for development/self-hosted builds."
+                        )
+                    }
+                }
             } }
         }
-        item { SettingCard(Icons.Default.AccountCircle,"Google account",if(vm.googleConnected) "Connected with Google Identity Services" else "Not connected") {
+        item { SettingCard(Icons.Default.AccountCircle,"Google account",if(vm.googleConnected) "Connected with Google Identity Services" else "Not connected — complete the setup assistant above first") {
             if(!vm.googleConnected) Button(
                 onClick={ vm.connectGoogle { pending -> authorizationLauncher.launch(IntentSenderRequest.Builder(pending).build()) } },
                 enabled=!vm.busy
@@ -176,6 +259,31 @@ enum class Screen(val label: String, val icon: ImageVector) {
         item { SectionTitle("Privacy & shared core", "VitalChronicle Android ${BuildConfig.VERSION_NAME} stores health records locally. General history is limited to ${DataRetention.GENERAL_DAYS} days and high-frequency cardiac raw data to ${DataRetention.HIGH_VOLUME_CARDIAC_DAYS} days. Deterministic metrics use the same Python core as desktop.") }
         item { OutlinedButton(onClick={vm.database.clearAll();vm.refresh()},modifier=Modifier.fillMaxWidth()) { Icon(Icons.Default.DeleteOutline,null); Spacer(Modifier.width(8.dp)); Text("Delete local health archive") } }
         vm.lastError?.let { item { ErrorCard(it) } }
+    }
+}
+
+@Composable fun GoogleSetupStep(number:Int,title:String,body:String,buttonLabel:String?=null,url:String?=null,content:@Composable ColumnScope.()->Unit={}) {
+    Card(colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.surfaceVariant)) {
+        Column(Modifier.fillMaxWidth().padding(14.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment=Alignment.Top) {
+                Surface(shape=RoundedCornerShape(50),color=MaterialTheme.colorScheme.primary) { Text(number.toString(),Modifier.padding(horizontal=9.dp,vertical=4.dp),color=MaterialTheme.colorScheme.onPrimary,fontWeight=FontWeight.Bold) }
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(title,fontWeight=FontWeight.SemiBold)
+                    Spacer(Modifier.height(3.dp))
+                    Text(body,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            content()
+            if(buttonLabel!=null && url!=null) ExternalLinkButton(buttonLabel,url)
+        }
+    }
+}
+
+@Composable fun ExternalLinkButton(label:String,url:String) {
+    val context=LocalContext.current
+    OutlinedButton(onClick={context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))},modifier=Modifier.fillMaxWidth()) {
+        Icon(Icons.Default.OpenInNew,null); Spacer(Modifier.width(8.dp)); Text(label)
     }
 }
 
