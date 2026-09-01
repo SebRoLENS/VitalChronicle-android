@@ -42,6 +42,8 @@ Automatic AI prefers the selected downloaded model. When none is installed, it u
 
 The on-device catalog currently provides the pinned Q4_K_M artifacts for `qwen3:0.6b`, `qwen3:1.7b`, `qwen3:4b` and `qwen3:8b`. Model files live in app-specific storage and can be paused, resumed, selected or deleted from Settings.
 
+VitalChronicle explicitly extracts the packaged ARM CPU backends at installation time. This is required by llama.cpp's runtime backend selection and keeps the baseline ARMv8 path available on devices such as the Exynos 9611-based Galaxy M31.
+
 ## Automatic updates
 
 From version 0.2.2 onward, VitalChronicle checks the latest GitHub Release at launch. When a newer version exists, the app downloads the canonical signed APK to its private cache, verifies the package name, version and signing certificate, and opens Android's package installer. Android always requires the user to confirm installation and may first require permission to install apps from this source.
