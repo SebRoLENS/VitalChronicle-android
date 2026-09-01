@@ -32,7 +32,10 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
     var aiAnswer by mutableStateOf(""); private set
     var aiEngine by mutableStateOf(AiEngine.AUTOMATIC)
     var aiModelName by mutableStateOf<String?>(null); private set
-    var historyDays by mutableStateOf(90)
+    private var requestedHistoryDays by mutableStateOf(DataRetention.GENERAL_DAYS)
+    var historyDays: Int
+        get() = requestedHistoryDays
+        set(value) { requestedHistoryDays = value.coerceIn(1, DataRetention.GENERAL_DAYS) }
     var analysisDays by mutableStateOf(28)
     var advancedOpen by mutableStateOf(false)
     var lastError by mutableStateOf<String?>(null); private set
@@ -43,7 +46,14 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
         HardwareProfile((info.totalMem / 1_073_741_824.0).toInt(), Runtime.getRuntime().availableProcessors(), "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
     }
 
-    init { refresh(); probeAi() }
+    init {
+        viewModelScope.launch {
+            val removed = withContext(Dispatchers.IO) { database.pruneRetention(compact = true) }
+            if (removed > 0) status = "$removed expired local records removed"
+            refresh()
+        }
+        probeAi()
+    }
 
     fun refresh() {
         viewModelScope.launch {
