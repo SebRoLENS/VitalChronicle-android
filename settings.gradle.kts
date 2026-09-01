@@ -16,3 +16,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "VitalChronicleAndroid"
 include(":app")
+include(":llamaAndroid")
+project(":llamaAndroid").projectDir = file("llama-android")

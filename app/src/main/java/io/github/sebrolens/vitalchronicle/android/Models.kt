@@ -50,11 +50,19 @@ data class AiResult(val answer: String, val engine: String, val model: String?)
 
 enum class AiEngine(val title: String) {
     AUTOMATIC("Automatic (recommended)"),
+    OLLAMA_LOCAL("Downloaded Ollama model · llama.cpp"),
     GEMINI_NANO("Android built-in AI · Gemini Nano"),
     DETERMINISTIC("Deterministic evidence only"),
 }
 
-data class HardwareProfile(val ramGb: Int, val cpuThreads: Int, val device: String)
+data class HardwareProfile(
+    val ramGb: Int,
+    val cpuThreads: Int,
+    val device: String,
+    val abi: String,
+    val freeStorageBytes: Long,
+    val lowRamDevice: Boolean,
+)
 
 fun JSONObject.optNullableString(key: String): String? =
     if (has(key) && !isNull(key)) optString(key).takeIf { it.isNotBlank() } else null
