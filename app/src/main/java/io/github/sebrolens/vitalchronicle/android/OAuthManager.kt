@@ -3,7 +3,10 @@ package io.github.sebrolens.vitalchronicle.android
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import okhttp3.FormBody
 import okhttp3.Request
@@ -35,24 +38,37 @@ class OAuthManager(
                 .appendQueryParameter("state", state)
                 .build()
             withContext(Dispatchers.Main) { activity.startActivity(Intent(Intent.ACTION_VIEW, authUrl)) }
-            val socket = server.accept()
-            socket.use {
-                val reader = BufferedReader(InputStreamReader(it.getInputStream()))
+
+            val authorizationCode = server.accept().use { socket ->
+                val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
                 val requestLine = reader.readLine() ?: error("OAuth callback was empty.")
                 val target = requestLine.split(" ").getOrNull(1) ?: error("Invalid OAuth callback.")
                 val uri = Uri.parse("http://localhost$target")
                 val returnedState = uri.getQueryParameter("state")
                 val error = uri.getQueryParameter("error")
                 val code = uri.getQueryParameter("code")
-                val body = if (error != null) "VitalChronicle authorization was cancelled: $error" else "Authorization received. You can return to VitalChronicle."
+                val body = if (error != null) {
+                    "VitalChronicle authorization was cancelled: $error"
+                } else {
+                    "Authorization received. Return to VitalChronicle to finish connecting your account."
+                }
                 val response = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n<html><body><h2>$body</h2></body></html>"
-                it.getOutputStream().write(response.toByteArray())
+                socket.getOutputStream().write(response.toByteArray())
                 require(returnedState == state) { "OAuth state verification failed." }
                 require(!code.isNullOrBlank()) { error ?: "Google did not return an authorization code." }
-                val token = exchangeCode(credentials, code)
-                vault.saveToken(token)
-                token
+                code
             }
+
+            // The localhost callback reaches this process while the external browser is
+            // still in the foreground. On recent Android versions a background app can
+            // temporarily have no usable default network, which made the immediate token
+            // exchange fail with UnknownHostException even though the browser had Internet.
+            // Wait until VitalChronicle is foreground/resumed before contacting Google.
+            awaitActivityResumed(activity)
+
+            val token = exchangeCode(credentials, authorizationCode)
+            vault.saveToken(token)
+            token
         }
     }
 
@@ -72,6 +88,15 @@ class OAuthManager(
         )
         vault.saveToken(refreshed)
         refreshed.accessToken
+    }
+
+    private suspend fun awaitActivityResumed(activity: Activity) {
+        val owner = activity as? LifecycleOwner ?: return
+        withContext(Dispatchers.Main) {
+            while (!owner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+                delay(100)
+            }
+        }
     }
 
     private fun exchangeCode(c: OAuthCredentials, code: String): OAuthToken {
