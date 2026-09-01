@@ -1,9 +1,10 @@
 package io.github.sebrolens.vitalchronicle.android
 
-import android.app.Activity
 import android.app.Application
 import android.app.ActivityManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -20,10 +21,11 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
     private val core = PythonCore()
     val vault = CredentialVault(app)
     private val http = AndroidHttpClient(app)
-    private val oauth = OAuthManager(vault, http)
+    private val oauth = GoogleAuthorizationManager(app, vault)
     private val syncer = GoogleHealthSync(database, core, oauth, http)
     private val nano = GeminiNanoEngine()
     val specs: List<DataTypeSpec> by lazy { core.specs() }
+    private val googleScopes: Set<String> by lazy { specs.map { it.scope }.filter { it.isNotBlank() }.toSet() }
 
     var metrics by mutableStateOf<List<MetricCard>>(emptyList()); private set
     var counts by mutableStateOf<Map<String, Int>>(emptyMap()); private set
@@ -32,6 +34,7 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
     var aiAnswer by mutableStateOf(""); private set
     var aiEngine by mutableStateOf(AiEngine.AUTOMATIC)
     var aiModelName by mutableStateOf<String?>(null); private set
+    var googleConnected by mutableStateOf(vault.nativeGoogleConnected()); private set
     private var requestedHistoryDays by mutableStateOf(DataRetention.GENERAL_DAYS)
     var historyDays: Int
         get() = requestedHistoryDays
@@ -39,6 +42,10 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
     var analysisDays by mutableStateOf(28)
     var advancedOpen by mutableStateOf(false)
     var lastError by mutableStateOf<String?>(null); private set
+
+    val googlePackageName: String = app.packageName
+    val googleSigningSha1: String = runCatching { GoogleAuthorizationManager.signingSha1(app) }
+        .getOrElse { "Unavailable: ${it.message ?: it.javaClass.simpleName}" }
 
     val hardware: HardwareProfile = run {
         val am = app.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
@@ -69,21 +76,36 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun importCredentials(text: String) {
-        runCatching { CredentialVault.parseCredentialJson(text) }
-            .onSuccess { vault.saveCredentials(it); status = "OAuth credentials imported"; lastError = null }
-            .onFailure { lastError = it.message; status = "OAuth credentials invalid" }
+    fun connectGoogle(launchResolution: (PendingIntent) -> Unit) {
+        launchBusy("Connecting with Google Identity Services…") {
+            val pendingIntent = oauth.beginAuthorization(googleScopes)
+            if (pendingIntent != null) {
+                status = "Complete Google authorization"
+                launchResolution(pendingIntent)
+            } else {
+                vault.clearLegacyOAuth()
+                googleConnected = true
+                status = "Google account connected"
+            }
+        }
     }
 
-    fun connectGoogle(activity: Activity) {
-        launchBusy("Connecting to Google…") {
-            val scopes = specs.map { it.scope }.filter { it.isNotBlank() }.toSet()
-            oauth.authenticate(activity, scopes)
+    fun completeGoogleAuthorization(data: Intent?) {
+        launchBusy("Completing Google authorization…") {
+            oauth.completeAuthorization(data)
+            vault.clearLegacyOAuth()
+            googleConnected = true
             status = "Google account connected"
         }
     }
 
-    fun disconnectGoogle() { vault.clearToken(); status = "Google account disconnected" }
+    fun disconnectGoogle() {
+        launchBusy("Disconnecting Google account…") {
+            oauth.disconnect(googleScopes)
+            googleConnected = false
+            status = "Google account disconnected"
+        }
+    }
 
     fun sync() {
         launchBusy("Starting Google Health sync…") {
