@@ -124,7 +124,7 @@ class GoogleHealthSync(
 
     private suspend fun requestJson(base: Request): JSONObject {
         var last: Exception? = null
-        retry@ repeat(3) { attempt ->
+        repeat(3) retry@ { attempt ->
             try {
                 val access = oauth.validAccessToken(googleScopes)
                 val req = base.newBuilder()
