@@ -1,0 +1,35 @@
+name: Apply AI models screen patch
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/apply_ai_models_screen.py'
+      - '.github/workflows/apply-ai-models-screen.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Apply patch
+        run: python scripts/apply_ai_models_screen.py
+      - name: Commit patched sources
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/build.gradle.kts \
+                  app/src/main/java/io/github/sebrolens/vitalchronicle/android/MainActivity.kt \
+                  app/src/main/java/io/github/sebrolens/vitalchronicle/android/OllamaModelCard.kt
+          git diff --cached --quiet && exit 0
+          git commit -m 'feat: add dedicated hardware-aware AI models screen'
+          git push origin HEAD:main
