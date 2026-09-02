@@ -80,7 +80,7 @@ def discover_families() -> tuple[list[str], dict[str, int]]:
     discovered: list[str] = []
     try:
         html = fetch_text("https://ollama.com/library?sort=newest")
-        for family in re.findall(r'href=["\']/library/([A-Za-z0-9._-]+)["\']', html):
+        for family in re.findall(r'/library/([A-Za-z0-9._-]+)', html):
             family = urllib.parse.unquote(family)
             if family.lower().startswith(PREFERRED_PREFIXES) and family not in discovered:
                 discovered.append(family)
@@ -102,24 +102,16 @@ def discover_families() -> tuple[list[str], dict[str, int]]:
 
 def discover_tags(family: str) -> tuple[list[str], bool]:
     family_q = urllib.parse.quote(family, safe="._-")
+    html = fetch_text(f"https://ollama.com/library/{family_q}/tags")
+    escaped = re.escape(family)
+
+    # Do not depend on Ollama's current anchor/DOM structure. Family:tag strings
+    # are present in the page's rendered data and links, so extract them wherever
+    # they occur and then apply a strict allow-list to the tag itself.
+    raw_tags = re.findall(rf"{escaped}:([A-Za-z0-9._-]+)", html, flags=re.IGNORECASE)
     tags: list[str] = []
-
-    # Use the Docker Registry v2 tags endpoint as the machine-readable source.
-    # Ollama's human-facing tags page changes markup frequently, whereas this API
-    # is also the canonical namespace used for the manifests downloaded below.
-    try:
-        raw = fetch_text(
-            f"https://registry.ollama.ai/v2/library/{family_q}/tags/list",
-            "application/json",
-        )
-        payload = json.loads(raw)
-        candidates = payload.get("tags") or []
-    except Exception as exc:
-        print(f"warning: {family}: registry tag list failed: {exc}", file=sys.stderr)
-        candidates = []
-
-    for raw_tag in candidates:
-        tag = str(raw_tag).strip()
+    for raw_tag in raw_tags:
+        tag = urllib.parse.unquote(raw_tag).strip()
         if not SAFE_COMPONENT.fullmatch(tag):
             continue
         lower = tag.lower()
@@ -128,17 +120,10 @@ def discover_tags(family: str) -> tuple[list[str], bool]:
         if SIMPLE_TAG.fullmatch(tag) and tag not in tags:
             tags.append(tag)
 
-    # The page is used only for capabilities/metadata, not for tag discovery.
-    supports_thinking = False
-    try:
-        html = fetch_text(f"https://ollama.com/library/{family_q}/tags")
-        supports_thinking = bool(re.search(r"\bthinking\b", html, flags=re.IGNORECASE))
-    except Exception as exc:
-        print(f"warning: {family}: capability page failed: {exc}", file=sys.stderr)
-
     # Explicit size tags are preferable to aliases like latest because they make
     # the UI understandable and allow stable deduplication.
     tags.sort(key=lambda value: (value.lower() == "latest", tag_size_hint(value), value))
+    supports_thinking = bool(re.search(r"\bthinking\b", html, flags=re.IGNORECASE))
     return tags[:16], supports_thinking
 
 
