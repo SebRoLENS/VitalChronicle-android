@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-02T07:58:41.161910+00:00",
+  "generatedAt": "2026-09-02T08:00:12.505010+00:00",
   "source": "https://ollama.com/library",
   "models": [
     {
@@ -24,7 +24,7 @@
       "downloadBytes": 16810714464,
       "sha256": "f5f1dd8920d417aac2718b0bda3403da274301efdd6760b4f0f4b864ff2ad57d",
       "minimumRamGb": 24,
-      "supportsThinking": false,
+      "supportsThinking": true,
       "catalogRank": 1900
     },
     {
@@ -36,8 +36,8 @@
       "downloadBytes": 21718480960,
       "sha256": "d372de8e934898a59e6ccfabc3368474711384d8f1fd4d22d87a3f0a45400cdc",
       "minimumRamGb": 32,
-      "supportsThinking": false,
-      "catalogRank": 1600
+      "supportsThinking": true,
+      "catalogRank": 1650
     },
     {
       "id": "gemma4:e2b",
@@ -48,8 +48,8 @@
       "downloadBytes": 7162394016,
       "sha256": "4e30e2665218745ef463f722c0bf86be0cab6ee676320f1cfadf91e989107448",
       "minimumRamGb": 14,
-      "supportsThinking": false,
-      "catalogRank": 1550
+      "supportsThinking": true,
+      "catalogRank": 1600
     },
     {
       "id": "gemma4:12b",
@@ -60,8 +60,8 @@
       "downloadBytes": 7381382048,
       "sha256": "1278394b693672ac2799eadc9a83fd98259a6a88a40acfb1dcaa6c6fc895a606",
       "minimumRamGb": 14,
-      "supportsThinking": false,
-      "catalogRank": 1550
+      "supportsThinking": true,
+      "catalogRank": 1600
     },
     {
       "id": "gemma4:e4b",
@@ -72,8 +72,8 @@
       "downloadBytes": 9608338848,
       "sha256": "4c27e0f5b5adf02ac956c7322bd2ee7636fe3f45a8512c9aba5385242cb6e09a",
       "minimumRamGb": 18,
-      "supportsThinking": false,
-      "catalogRank": 1550
+      "supportsThinking": true,
+      "catalogRank": 1600
     },
     {
       "id": "gemma4:26b",
@@ -84,8 +84,8 @@
       "downloadBytes": 16947541728,
       "sha256": "dfd98d2734212d0c128e128e5d88edac764aaa4f4af2f4c196941f2354aab8da",
       "minimumRamGb": 24,
-      "supportsThinking": false,
-      "catalogRank": 1550
+      "supportsThinking": true,
+      "catalogRank": 1600
     },
     {
       "id": "gemma4:31b",
@@ -96,8 +96,8 @@
       "downloadBytes": 19868969920,
       "sha256": "280af6832eca23cb322c4dcc65edfea98a21b8f8ab07dc7553bd6f7e6e7a3313",
       "minimumRamGb": 24,
-      "supportsThinking": false,
-      "catalogRank": 1550
+      "supportsThinking": true,
+      "catalogRank": 1600
     },
     {
       "id": "qwen3.5:latest",
@@ -108,20 +108,8 @@
       "downloadBytes": 6594462816,
       "sha256": "dec52a44569a2a25341c4e4d3fee25846eed4f6f0b936278e3a3c900bb99d37c",
       "minimumRamGb": 14,
-      "supportsThinking": false,
-      "catalogRank": 1500
-    },
-    {
-      "id": "deepseek-ocr:latest",
-      "family": "deepseek-ocr",
-      "tag": "latest",
-      "displayName": "DeepSeek -ocr \u00b7 latest",
-      "parameterCount": "Unknown",
-      "downloadBytes": 6687238848,
-      "sha256": "3a18673ff291a1d8de94d490877127899356d33a18028d5f3945bf245c11b02c",
-      "minimumRamGb": 14,
-      "supportsThinking": false,
-      "catalogRank": 1400
+      "supportsThinking": true,
+      "catalogRank": 1550
     },
     {
       "id": "granite4:latest",
@@ -133,19 +121,7 @@
       "sha256": "5c7ac4aead1bcf4c8da9534ed72cc632d005aeed6547f1e8662ccdfae688364e",
       "minimumRamGb": 8,
       "supportsThinking": false,
-      "catalogRank": 1350
-    },
-    {
-      "id": "qwen3-embedding:latest",
-      "family": "qwen3-embedding",
-      "tag": "latest",
-      "displayName": "Qwen 3-embedding \u00b7 latest",
-      "parameterCount": "Unknown",
-      "downloadBytes": 4676804928,
-      "sha256": "3fcd3febec8b3fd64435204db75bf0dd73b91e8d0661e0331acfe7e7c3120b85",
-      "minimumRamGb": 10,
-      "supportsThinking": false,
-      "catalogRank": 1300
+      "catalogRank": 1450
     },
     {
       "id": "qwen3-vl:latest",
@@ -157,7 +133,7 @@
       "sha256": "ed12a4674d727a74ac4816c906094ea9d3119fbea46ca93288c3ce4ffbe38c55",
       "minimumRamGb": 10,
       "supportsThinking": true,
-      "catalogRank": 1250
+      "catalogRank": 1400
     },
     {
       "id": "qwen3-coder:latest",
@@ -168,8 +144,8 @@
       "downloadBytes": 18556688736,
       "sha256": "1194192cf2a187eb02722edcc3f77b11d21f537048ce04b67ccf8ba78863006a",
       "minimumRamGb": 24,
-      "supportsThinking": false,
-      "catalogRank": 1100
+      "supportsThinking": true,
+      "catalogRank": 1250
     },
     {
       "id": "mistral-small3.2:latest",
@@ -181,7 +157,7 @@
       "sha256": "41a5b0c36a28a3a0480ce2e4007d3a21e3298be70e2b9a103960581412997dca",
       "minimumRamGb": 24,
       "supportsThinking": false,
-      "catalogRank": 1050
+      "catalogRank": 1200
     },
     {
       "id": "gemma3n:latest",
@@ -193,43 +169,283 @@
       "sha256": "38e8dcc30df4eb0e29eaf5c74ba6ce3f2cd66badad50768fc14362acfb8b8cb6",
       "minimumRamGb": 14,
       "supportsThinking": false,
-      "catalogRank": 1000
+      "catalogRank": 1150
     },
     {
-      "id": "qwen2.5vl:latest",
-      "family": "qwen2.5vl",
-      "tag": "latest",
-      "displayName": "Qwen 2.5vl \u00b7 latest",
-      "parameterCount": "Unknown",
-      "downloadBytes": 5969233408,
-      "sha256": "a99b7f834d754b88f122d865f32758ba9f0994a83f8363df2c1e71c17605a025",
-      "minimumRamGb": 10,
-      "supportsThinking": false,
+      "id": "qwen3:0.6b",
+      "family": "qwen3",
+      "tag": "0.6b",
+      "displayName": "Qwen 3 \u00b7 0.6B",
+      "parameterCount": "0.6B",
+      "downloadBytes": 522640096,
+      "sha256": "7f4030143c1c477224c5434f8272c662a8b042079a0a584f0a27a1684fe2e1fa",
+      "minimumRamGb": 4,
+      "supportsThinking": true,
       "catalogRank": 950
     },
     {
-      "id": "phi4-reasoning:latest",
-      "family": "phi4-reasoning",
-      "tag": "latest",
-      "displayName": "Phi 4-reasoning \u00b7 latest",
-      "parameterCount": "Unknown",
-      "downloadBytes": 11117500000,
-      "sha256": "89f38c5f78de6092c203b63dd62ff1285276a6f8ee140dd1eb2f6e196a631f40",
-      "minimumRamGb": 18,
-      "supportsThinking": false,
-      "catalogRank": 900
+      "id": "qwen3:1.7b",
+      "family": "qwen3",
+      "tag": "1.7b",
+      "displayName": "Qwen 3 \u00b7 1.7B",
+      "parameterCount": "1.7B",
+      "downloadBytes": 1359279776,
+      "sha256": "3d0b790534fe4b79525fc3692950408dca41171676ed7e21db57af5c65ef6ab6",
+      "minimumRamGb": 6,
+      "supportsThinking": true,
+      "catalogRank": 950
     },
     {
-      "id": "phi4-mini-reasoning:latest",
-      "family": "phi4-mini-reasoning",
-      "tag": "latest",
-      "displayName": "Phi 4-mini-reasoning \u00b7 latest",
-      "parameterCount": "Unknown",
-      "downloadBytes": 3152477440,
-      "sha256": "f4dd2368e6c32725dc1c5c5548ae9ee2724d6a79052952eb50b65e26288022c4",
+      "id": "qwen3:4b",
+      "family": "qwen3",
+      "tag": "4b",
+      "displayName": "Qwen 3 \u00b7 4B",
+      "parameterCount": "4B",
+      "downloadBytes": 2497280480,
+      "sha256": "3e4cb14174460404e7a233e531675303b2fbf7749c02f91864fe311ab6344e4f",
+      "minimumRamGb": 8,
+      "supportsThinking": true,
+      "catalogRank": 950
+    },
+    {
+      "id": "qwen3:8b",
+      "family": "qwen3",
+      "tag": "8b",
+      "displayName": "Qwen 3 \u00b7 8B",
+      "parameterCount": "8B",
+      "downloadBytes": 5225374496,
+      "sha256": "a3de86cd1c132c822487ededd47a324c50491393e6565cd14bafa40d0b8e686f",
+      "minimumRamGb": 10,
+      "supportsThinking": true,
+      "catalogRank": 950
+    },
+    {
+      "id": "qwen3:14b",
+      "family": "qwen3",
+      "tag": "14b",
+      "displayName": "Qwen 3 \u00b7 14B",
+      "parameterCount": "14B",
+      "downloadBytes": 9276184896,
+      "sha256": "a8cc1361f3145dc01f6d77c6c82c9116b9ffe3c97b34716fe20418455876c40e",
+      "minimumRamGb": 18,
+      "supportsThinking": true,
+      "catalogRank": 950
+    },
+    {
+      "id": "qwen3:30b",
+      "family": "qwen3",
+      "tag": "30b",
+      "displayName": "Qwen 3 \u00b7 30B",
+      "parameterCount": "30B",
+      "downloadBytes": 18556685856,
+      "sha256": "58574f2e94b99fb9e4391408b57e5aeaaaec10f6384e9a699fc2cb43a5c8eabf",
+      "minimumRamGb": 24,
+      "supportsThinking": true,
+      "catalogRank": 950
+    },
+    {
+      "id": "gemma3:270m",
+      "family": "gemma3",
+      "tag": "270m",
+      "displayName": "Gemma 3 \u00b7 270M",
+      "parameterCount": "270M",
+      "downloadBytes": 291545472,
+      "sha256": "735af2139dc652bf01112746474883d79a52fa1c19038265d363e3d42556f7a2",
+      "minimumRamGb": 4,
+      "supportsThinking": false,
+      "catalogRank": 750
+    },
+    {
+      "id": "gemma3:1b",
+      "family": "gemma3",
+      "tag": "1b",
+      "displayName": "Gemma 3 \u00b7 1B",
+      "parameterCount": "1B",
+      "downloadBytes": 815310432,
+      "sha256": "7cd4618c1faf8b7233c6c906dac1694b6a47684b37b8895d470ac688520b9c01",
+      "minimumRamGb": 4,
+      "supportsThinking": false,
+      "catalogRank": 750
+    },
+    {
+      "id": "gemma3:4b",
+      "family": "gemma3",
+      "tag": "4b",
+      "displayName": "Gemma 3 \u00b7 4B",
+      "parameterCount": "4B",
+      "downloadBytes": 3338792448,
+      "sha256": "aeda25e63ebd698fab8638ffb778e68bed908b960d39d0becc650fa981609d25",
       "minimumRamGb": 8,
       "supportsThinking": false,
-      "catalogRank": 850
+      "catalogRank": 750
+    },
+    {
+      "id": "gemma3:12b",
+      "family": "gemma3",
+      "tag": "12b",
+      "displayName": "Gemma 3 \u00b7 12B",
+      "parameterCount": "12B",
+      "downloadBytes": 8149180896,
+      "sha256": "e8ad13eff07a78d89926e9e8b882317d082ef5bf9768ad7b50fcdbbcd63748de",
+      "minimumRamGb": 14,
+      "supportsThinking": false,
+      "catalogRank": 750
+    },
+    {
+      "id": "gemma3:27b",
+      "family": "gemma3",
+      "tag": "27b",
+      "displayName": "Gemma 3 \u00b7 27B",
+      "parameterCount": "27B",
+      "downloadBytes": 17396927584,
+      "sha256": "e796792eba26c4d3b04b0ac5adb01a453dd9ec2dfd83b6c59cbf6fe5f30b0f68",
+      "minimumRamGb": 24,
+      "supportsThinking": false,
+      "catalogRank": 750
+    },
+    {
+      "id": "phi4-mini:3.8b",
+      "family": "phi4-mini",
+      "tag": "3.8b",
+      "displayName": "Phi 4-mini \u00b7 3.8B",
+      "parameterCount": "3.8B",
+      "downloadBytes": 2491874624,
+      "sha256": "3c168af1dea0a414299c7d9077e100ac763370e5a98b3c53801a958a47f0a5db",
+      "minimumRamGb": 8,
+      "supportsThinking": false,
+      "catalogRank": 650
+    },
+    {
+      "id": "deepseek-r1:1.5b",
+      "family": "deepseek-r1",
+      "tag": "1.5b",
+      "displayName": "DeepSeek -r1 \u00b7 1.5B",
+      "parameterCount": "1.5B",
+      "downloadBytes": 1117320512,
+      "sha256": "aabd4debf0c8f08881923f2c25fc0fdeed24435271c2b3e92c4af36704040dbc",
+      "minimumRamGb": 6,
+      "supportsThinking": true,
+      "catalogRank": 500
+    },
+    {
+      "id": "deepseek-r1:7b",
+      "family": "deepseek-r1",
+      "tag": "7b",
+      "displayName": "DeepSeek -r1 \u00b7 7B",
+      "parameterCount": "7B",
+      "downloadBytes": 4683073184,
+      "sha256": "96c415656d377afbff962f6cdb2394ab092ccbcbaab4b82525bc4ca800fe8a49",
+      "minimumRamGb": 10,
+      "supportsThinking": true,
+      "catalogRank": 500
+    },
+    {
+      "id": "deepseek-r1:8b",
+      "family": "deepseek-r1",
+      "tag": "8b",
+      "displayName": "DeepSeek -r1 \u00b7 8B",
+      "parameterCount": "8B",
+      "downloadBytes": 5225373760,
+      "sha256": "e6a7edc1a4d7d9b2de136a221a57336b76316cfe53a252aeba814496c5ae439d",
+      "minimumRamGb": 10,
+      "supportsThinking": true,
+      "catalogRank": 500
+    },
+    {
+      "id": "deepseek-r1:14b",
+      "family": "deepseek-r1",
+      "tag": "14b",
+      "displayName": "DeepSeek -r1 \u00b7 14B",
+      "parameterCount": "14B",
+      "downloadBytes": 8988109952,
+      "sha256": "6e9f90f02bb3b39b59e81916e8cfce9deb45aeaeb9a54a5be4414486b907dc1e",
+      "minimumRamGb": 14,
+      "supportsThinking": true,
+      "catalogRank": 500
+    },
+    {
+      "id": "deepseek-r1:32b",
+      "family": "deepseek-r1",
+      "tag": "32b",
+      "displayName": "DeepSeek -r1 \u00b7 32B",
+      "parameterCount": "32B",
+      "downloadBytes": 19851335552,
+      "sha256": "6150cb382311b69f09cc0f9a1b69fc029cbd742b66bb8ec531aa5ecf5c613e93",
+      "minimumRamGb": 24,
+      "supportsThinking": true,
+      "catalogRank": 500
+    },
+    {
+      "id": "smollm2:135m",
+      "family": "smollm2",
+      "tag": "135m",
+      "displayName": "SmolLM 2 \u00b7 135M",
+      "parameterCount": "135M",
+      "downloadBytes": 270885952,
+      "sha256": "f535f83ec568d040f88ddc04a199fa6da90923bbb41d4dcaed02caa924d6ef57",
+      "minimumRamGb": 4,
+      "supportsThinking": false,
+      "catalogRank": 150
+    },
+    {
+      "id": "smollm2:360m",
+      "family": "smollm2",
+      "tag": "360m",
+      "displayName": "SmolLM 2 \u00b7 360M",
+      "parameterCount": "360M",
+      "downloadBytes": 725553792,
+      "sha256": "7d23be4097d67c5c43c3df62ebc19609a25f483c7d0b77d3989e1d94e36ccab6",
+      "minimumRamGb": 4,
+      "supportsThinking": false,
+      "catalogRank": 150
+    },
+    {
+      "id": "smollm2:1.7b",
+      "family": "smollm2",
+      "tag": "1.7b",
+      "displayName": "SmolLM 2 \u00b7 1.7B",
+      "parameterCount": "1.7B",
+      "downloadBytes": 1820414656,
+      "sha256": "4d2396b16114669389d7555c15a1592aad584750310f648edad5ca8c4eccda17",
+      "minimumRamGb": 6,
+      "supportsThinking": false,
+      "catalogRank": 150
+    },
+    {
+      "id": "llama3.2:1b",
+      "family": "llama3.2",
+      "tag": "1b",
+      "displayName": "Llama 3.2 \u00b7 1B",
+      "parameterCount": "1B",
+      "downloadBytes": 1321082688,
+      "sha256": "74701a8c35f6c8d9a4b91f3f3497643001d63e0c7a84e085bed452548fa88d45",
+      "minimumRamGb": 6,
+      "supportsThinking": false,
+      "catalogRank": 20
+    },
+    {
+      "id": "llama3.2:3b",
+      "family": "llama3.2",
+      "tag": "3b",
+      "displayName": "Llama 3.2 \u00b7 3B",
+      "parameterCount": "3B",
+      "downloadBytes": 2019377376,
+      "sha256": "dde5aa3fc5ffc17176b5e8bdc82f587b24b2678c6c66101bf7da77af9f7ccdff",
+      "minimumRamGb": 8,
+      "supportsThinking": false,
+      "catalogRank": 20
+    },
+    {
+      "id": "mistral:7b",
+      "family": "mistral",
+      "tag": "7b",
+      "displayName": "Mistral \u00b7 7B",
+      "parameterCount": "7B",
+      "downloadBytes": 4372811712,
+      "sha256": "f5074b1221da0f5a2910d33b642efa5b9eb58cfdddca1c79e16d7ad28aa2b31f",
+      "minimumRamGb": 10,
+      "supportsThinking": false,
+      "catalogRank": 20
     }
   ]
 }
