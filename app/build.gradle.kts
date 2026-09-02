@@ -17,9 +17,9 @@ android {
         applicationId = "io.github.sebrolens.vitalchronicle.android"
         minSdk = 26
         targetSdk = 36
-        // 0.3.4 introduces the dedicated hardware-aware AI model manager.
-        versionCode = 21
-        versionName = "0.3.4"
+        // 0.3.5 restores shared-core compatibility for daily five-minute heart-rate rollups.
+        versionCode = 22
+        versionName = "0.3.5"
         ndk {
             abiFilters += listOf("arm64-v8a")
         }
