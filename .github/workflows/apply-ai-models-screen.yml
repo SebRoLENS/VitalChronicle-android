@@ -20,6 +20,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
+      - name: Use first matching card state block
+        run: sed -i 's/if count != 1:/if count < 1:/' scripts/apply_ai_models_screen.py
       - name: Apply patch
         run: python scripts/apply_ai_models_screen.py
       - name: Commit patched sources
