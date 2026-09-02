@@ -17,6 +17,46 @@ from google_health_viewer.analysis import (
 from mobile_bridge import SQLiteStore
 
 
+class _HeartRateCompatibleStore(SQLiteStore):
+    """Expose Android five-minute rollups in the canonical shared-core shape.
+
+    Google Health rollups use ``heartRate.beatsPerMinuteAvg``. Newer Android
+    syncs also persist a compatibility ``beatsPerMinute`` field, but existing
+    local rollup rows may predate that augmentation. The shared core and the
+    Android fallback both use the same store, so normalize the read view once
+    here instead of maintaining two independent heart-rate implementations.
+    The SQLite payload itself is intentionally left untouched.
+    """
+
+    def list_records(
+        self,
+        data_type: str,
+        start: str | None = None,
+        end: str | None = None,
+        limit: int = 20000,
+        newest: bool = False,
+    ) -> list[dict[str, Any]]:
+        records = super().list_records(data_type, start, end, limit, newest)
+        if data_type != "heart-rate":
+            return records
+
+        for record in records:
+            payload = record.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            heart_rate = payload.get("heartRate")
+            if not isinstance(heart_rate, dict) or "beatsPerMinute" in heart_rate:
+                continue
+            average = heart_rate.get("beatsPerMinuteAvg")
+            try:
+                value = float(average)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(value):
+                heart_rate["beatsPerMinute"] = value
+        return records
+
+
 def _heart_rate_today_from_store(
     store: SQLiteStore,
     reference_day,
@@ -145,7 +185,7 @@ def _five_minute_heart_rate(
 
 
 def dashboard_from_sqlite(database_path: str, reference_day: str | None = None) -> str:
-    store = SQLiteStore(database_path)
+    store = _HeartRateCompatibleStore(database_path)
     try:
         day = datetime.fromisoformat(reference_day).date() if reference_day else datetime.now().date()
         snapshot = build_daily_progress_snapshot(store, day)
