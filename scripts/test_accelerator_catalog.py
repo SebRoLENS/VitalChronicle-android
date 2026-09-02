@@ -71,6 +71,10 @@ def main() -> int:
     adapter = NATIVE_ADAPTER.read_text(encoding="utf-8")
     require("params.n_gpu_layers = 999" in adapter, "llama.cpp must request accelerator offload")
     require("retrying CPU-only backend" in adapter and "params.n_gpu_layers = 0" in adapter, "accelerator failure must retry CPU")
+    require("ggml_backend_dev_count" in adapter and "std::stable_sort" in adapter, "runtime must rank actual loaded accelerator devices")
+    require('"hexagon"' in adapter and '"htp"' in adapter and '"npu"' in adapter and '"tpu"' in adapter, "specific NPU/TPU backends must rank first")
+    require('"opencl"' in adapter and '"adreno"' in adapter, "specific GPU backends must be recognized")
+    require('"vulkan"' in adapter and "return 200" in adapter, "generic Vulkan must remain the fallback accelerator")
 
     model_card = MODEL_CARD.read_text(encoding="utf-8")
     require("Acceleration drivers" in model_card, "AI model cards must expose driver availability")
