@@ -64,7 +64,7 @@ fun OllamaModelCard(
                 if(model.supportsThinking) AssistChip(onClick={},label={Text("Thinking")},leadingIcon={Icon(Icons.Default.Psychology,null)})
                 AssistChip(
                     onClick={},
-                    label={Text(if(vm.hardware.ggufHardwareAccelerated) "Accelerated · ${vm.hardware.ggufAccelerationBackend}" else "CPU · ${vm.hardware.ggufAccelerationBackend}")}
+                    label={Text(if(vm.hardware.ggufHardwareAccelerated) "HW accelerated · ${vm.hardware.ggufAccelerationBackend}" else "CPU only · ${vm.hardware.ggufAccelerationBackend}")}
                 )
                 Text(
                     if(hardwareFit) "Fits this phone" else "Needs about ${model.minimumRamGb} GB RAM",
@@ -72,6 +72,15 @@ fun OllamaModelCard(
                     color=if(hardwareFit) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                 )
             }
+
+            Text(
+                if(vm.hardware.ggufHardwareAccelerated)
+                    "Inference backend on this phone: ${vm.hardware.ggufAccelerationBackend}. GPU/NPU acceleration is enabled for this GGUF runtime."
+                else
+                    "Inference backend on this phone: ${vm.hardware.ggufAccelerationBackend}. No GPU/NPU acceleration for this GGUF model in this APK.",
+                style=MaterialTheme.typography.bodySmall,
+                color=MaterialTheme.colorScheme.onSurfaceVariant,
+            )
 
             when(state) {
                 OllamaInstallState.NotInstalled -> Text("Not downloaded",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)

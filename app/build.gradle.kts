@@ -17,8 +17,8 @@ android {
         applicationId = "io.github.sebrolens.vitalchronicle.android"
         minSdk = 26
         targetSdk = 36
-        versionCode = 20
-        versionName = "0.3.3"
+        versionCode = 21
+        versionName = "0.3.4"
         ndk {
             abiFilters += listOf("arm64-v8a")
         }

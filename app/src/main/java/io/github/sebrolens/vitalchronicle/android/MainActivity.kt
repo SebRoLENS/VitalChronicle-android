@@ -65,6 +65,7 @@ enum class Screen(val label: String, val icon: ImageVector) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun VitalApp(vm: VitalViewModel = viewModel()) {
     var screen by remember { mutableStateOf(Screen.Overview) }
+    var aiModelsOpen by remember { mutableStateOf(false) }
     val activity = LocalContext.current as? Activity
     val readyUpdate = vm.updateState as? AppUpdateState.Ready
 
@@ -92,15 +93,29 @@ enum class Screen(val label: String, val icon: ImageVector) {
         )
     }
     Scaffold(
-        topBar={ TopAppBar(title={ Column { Text("VitalChronicle", fontWeight=FontWeight.SemiBold); Text("Android · ${BuildConfig.VERSION_NAME}", style=MaterialTheme.typography.labelSmall) } }, actions={ if(vm.busy) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth=2.dp) }) },
-        bottomBar={ NavigationBar { Screen.entries.forEach { item -> NavigationBarItem(selected=screen==item,onClick={screen=item},icon={Icon(item.icon,null)},label={Text(item.label)}) } } }
+        topBar={
+            if (aiModelsOpen) {
+                TopAppBar(
+                    title={ Column { Text("AI models", fontWeight=FontWeight.SemiBold); Text("Hardware-aware local inference", style=MaterialTheme.typography.labelSmall) } },
+                    navigationIcon={ IconButton(onClick={aiModelsOpen=false}) { Icon(Icons.Default.ArrowBack,"Back to Settings") } },
+                    actions={ if(vm.busy) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth=2.dp) },
+                )
+            } else {
+                TopAppBar(title={ Column { Text("VitalChronicle", fontWeight=FontWeight.SemiBold); Text("Android · ${BuildConfig.VERSION_NAME}", style=MaterialTheme.typography.labelSmall) } }, actions={ if(vm.busy) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth=2.dp) })
+            }
+        },
+        bottomBar={ if(!aiModelsOpen) NavigationBar { Screen.entries.forEach { item -> NavigationBarItem(selected=screen==item,onClick={screen=item},icon={Icon(item.icon,null)},label={Text(item.label)}) } } }
     ) { padding ->
         Box(Modifier.padding(padding).fillMaxSize()) {
-            when(screen) {
-                Screen.Overview -> OverviewScreen(vm)
-                Screen.Data -> DataScreen(vm)
-                Screen.AI -> AiScreen(vm)
-                Screen.Settings -> SettingsScreen(vm)
+            if (aiModelsOpen) {
+                AiModelsScreen(vm)
+            } else {
+                when(screen) {
+                    Screen.Overview -> OverviewScreen(vm)
+                    Screen.Data -> DataScreen(vm)
+                    Screen.AI -> AiScreen(vm)
+                    Screen.Settings -> SettingsScreen(vm,onOpenAiModels={aiModelsOpen=true})
+                }
             }
         }
     }
@@ -323,7 +338,7 @@ enum class Screen(val label: String, val icon: ImageVector) {
     }
 }
 
-@Composable fun SettingsScreen(vm: VitalViewModel) {
+@Composable fun SettingsScreen(vm: VitalViewModel, onOpenAiModels: () -> Unit) {
     var googleSetupOpen by remember { mutableStateOf(!vm.googleConnected) }
     val activity = LocalContext.current as? Activity
     val requiredScopes = remember(vm.specs) { vm.specs.map { it.scope }.filter { it.isNotBlank() }.distinct().sorted() }
@@ -420,43 +435,25 @@ enum class Screen(val label: String, val icon: ImageVector) {
         } }
         item { SettingCard(Icons.Default.Sync,"Sync history","Up to ${DataRetention.GENERAL_DAYS} days; high-frequency cardiac streams keep ${DataRetention.HIGH_VOLUME_CARDIAC_DAYS} days") { Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){ listOf(30,90).forEach{d->FilterChip(selected=vm.historyDays==d,onClick={vm.historyDays=d},label={Text("${d}d")})} } } }
 
-        item { SectionTitle("Local AI", "Automatic mode uses the selected downloaded Ollama model first, then Android's built-in Gemini Nano. No health data is sent to a cloud AI service.") }
-        item { Card { Column(Modifier.padding(16.dp), verticalArrangement=Arrangement.spacedBy(10.dp)) {
-            Text("AI engine",fontWeight=FontWeight.SemiBold)
-            AiEngine.entries.forEach { engine -> Row(Modifier.fillMaxWidth().clickable{vm.aiEngine=engine}.padding(vertical=4.dp),verticalAlignment=Alignment.CenterVertically){ RadioButton(selected=vm.aiEngine==engine,onClick={vm.aiEngine=engine}); Column { Text(engine.title); if(engine==AiEngine.AUTOMATIC) Text("Recommended",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.primary) } } }
-            vm.aiModelName?.let { Text("Detected / selected model · $it",style=MaterialTheme.typography.bodySmall) }
-            Text("Ollama models stream thinking and output tokens through the bundled llama.cpp runtime. Gemini Nano keeps the Accurate local profile (temperature 0.2 and FULL model when available).",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-        } } }
-
-        item {
-            SectionTitle(
-                "Ollama models on this phone",
-                "Official Ollama GGUF layers run directly on-device through llama.cpp; no Ollama server or cloud inference is required.",
-            )
-        }
+        item { SectionTitle("Local AI", "Automatic mode prefers an accelerated Android runtime when one is actually available, then falls back to downloaded local models and deterministic analysis. No health data is sent to a cloud AI service.") }
         item {
             Card(colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.primaryContainer)) {
-                Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(5.dp)) {
+                Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
                     Row(verticalAlignment=Alignment.CenterVertically) {
                         Icon(Icons.Default.Recommend,null,tint=MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.width(9.dp))
-                        Text("Automatic recommendation · ${vm.recommendedAiPath}",fontWeight=FontWeight.Bold)
+                        Column(Modifier.weight(1f)) {
+                            Text("Automatic recommendation",fontWeight=FontWeight.Bold)
+                            Text(vm.recommendedAiPath,style=MaterialTheme.typography.bodySmall)
+                        }
                     }
-                    Text(
-                        "${vm.hardware.device} · ${vm.hardware.socDescription}. Chosen from ${vm.hardware.ramGb} GB RAM, ${vm.hardware.cpuThreads} CPU threads, ${vm.hardware.abi}, ${formatBytes(vm.hardware.freeStorageBytes)} free and the acceleration backends actually available to this APK.",
-                        style=MaterialTheme.typography.bodySmall,
-                    )
+                    Text("${vm.hardware.device} · ${vm.hardware.socDescription} · ${vm.hardware.ramGb} GB RAM",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    Button(onClick=onOpenAiModels,modifier=Modifier.fillMaxWidth()) {
+                        Icon(Icons.Default.Memory,null); Spacer(Modifier.width(8.dp)); Text("AI models and acceleration")
+                    }
                 }
             }
         }
-        items(vm.ollamaCatalog,key={it.id}) { model ->
-            OllamaModelCard(model,vm.ollamaModelStates[model.id] ?: OllamaInstallState.NotInstalled,vm)
-        }
-        vm.modelManagerMessage?.let { message -> item {
-            Card(colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.surfaceVariant)) {
-                Text(message,Modifier.padding(14.dp),style=MaterialTheme.typography.bodySmall)
-            }
-        } }
 
         item { Card { Column {
             ListItem(headlineContent={Text("Advanced settings")},supportingContent={Text("Hardware, analysis window and explicit engine override")},trailingContent={Icon(if(vm.advancedOpen) Icons.Default.ExpandLess else Icons.Default.ExpandMore,null)},modifier=Modifier.clickable{vm.advancedOpen=!vm.advancedOpen})
@@ -480,6 +477,71 @@ enum class Screen(val label: String, val icon: ImageVector) {
         item { SectionTitle("Privacy & shared core", "VitalChronicle Android ${BuildConfig.VERSION_NAME} stores health records locally. General history is limited to ${DataRetention.GENERAL_DAYS} days and high-frequency cardiac data to ${DataRetention.HIGH_VOLUME_CARDIAC_DAYS} days. Deterministic metrics use the same Python core as desktop.") }
         item { OutlinedButton(onClick={vm.database.clearAll();vm.refresh()},modifier=Modifier.fillMaxWidth()) { Icon(Icons.Default.DeleteOutline,null); Spacer(Modifier.width(8.dp)); Text("Delete local health archive") } }
         vm.lastError?.let { item { ErrorCard(it) } }
+    }
+}
+
+@Composable fun AiModelsScreen(vm: VitalViewModel) {
+    LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
+        item {
+            SectionTitle(
+                "Local inference on this phone",
+                "VitalChronicle labels the backend it can actually use. Hardware merely present in the SoC is not called accelerated unless the installed runtime can use it.",
+            )
+        }
+        item {
+            Card(colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.primaryContainer)) {
+                Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(7.dp)) {
+                    Text("${vm.hardware.device} · ${vm.hardware.socDescription}",fontWeight=FontWeight.Bold)
+                    Text("${vm.hardware.ramGb} GB RAM · ${vm.hardware.cpuThreads} CPU threads · ${vm.hardware.abi} · ${formatBytes(vm.hardware.freeStorageBytes)} free",style=MaterialTheme.typography.bodySmall)
+                    HorizontalDivider()
+                    Text("Android AI / Gemini Nano",fontWeight=FontWeight.SemiBold)
+                    Text(
+                        if(vm.nanoCapability.supported) "ACCELERATED RUNTIME · ${vm.nanoCapability.runtimeLabel} · ${vm.nanoCapability.modelName ?: vm.nanoCapability.status}"
+                        else "UNAVAILABLE · ${vm.nanoCapability.status}",
+                        style=MaterialTheme.typography.bodySmall,
+                        color=if(vm.nanoCapability.supported) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text("Downloaded GGUF models",fontWeight=FontWeight.SemiBold)
+                    Text(
+                        if(vm.hardware.ggufHardwareAccelerated) "HARDWARE ACCELERATED · ${vm.hardware.ggufAccelerationBackend}"
+                        else "CPU ONLY · ${vm.hardware.ggufAccelerationBackend}",
+                        style=MaterialTheme.typography.bodySmall,
+                        color=if(vm.hardware.ggufHardwareAccelerated) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary,
+                    )
+                    if(!vm.hardware.ggufHardwareAccelerated && vm.hardware.vulkanCompute) {
+                        Text("This phone reports Vulkan compute, but this VitalChronicle APK does not currently package a Vulkan GGUF backend. The models below therefore run on CPU, not GPU/NPU.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        }
+        item {
+            Card { Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                Text("AI engine",fontWeight=FontWeight.SemiBold)
+                AiEngine.entries.forEach { engine ->
+                    Row(Modifier.fillMaxWidth().clickable{vm.aiEngine=engine}.padding(vertical=3.dp),verticalAlignment=Alignment.CenterVertically) {
+                        RadioButton(selected=vm.aiEngine==engine,onClick={vm.aiEngine=engine})
+                        Column { Text(engine.title); if(engine==AiEngine.AUTOMATIC) Text("Uses the fastest supported local path first",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.primary) }
+                    }
+                }
+                vm.aiModelName?.let { Text("Currently detected / selected · $it",style=MaterialTheme.typography.bodySmall) }
+            } }
+        }
+        item { SectionTitle("Downloadable GGUF models", "Every card states whether inference is GPU/NPU accelerated or CPU-only on this installation.") }
+        items(vm.ollamaCatalog,key={it.id}) { model ->
+            OllamaModelCard(model,vm.ollamaModelStates[model.id] ?: OllamaInstallState.NotInstalled,vm)
+        }
+        vm.modelManagerMessage?.let { message -> item {
+            Card(colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.surfaceVariant)) {
+                Text(message,Modifier.padding(14.dp),style=MaterialTheme.typography.bodySmall)
+            }
+        } }
+        item {
+            Text(
+                "A model being compatible with GGUF does not imply NPU/GPU acceleration. VitalChronicle only marks acceleration when the runtime backend used by this APK is available on this phone.",
+                style=MaterialTheme.typography.bodySmall,
+                color=MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
