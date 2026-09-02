@@ -7,7 +7,6 @@ straight from registry.ollama.ai and verifies the exact SHA-256 before loading t
 from __future__ import annotations
 
 import json
-import math
 import re
 import sys
 import urllib.parse
@@ -102,29 +101,45 @@ def discover_families() -> tuple[list[str], dict[str, int]]:
 
 
 def discover_tags(family: str) -> tuple[list[str], bool]:
-    url = f"https://ollama.com/library/{urllib.parse.quote(family, safe='._-')}/tags"
-    html = fetch_text(url)
-    escaped = re.escape(family)
-    patterns = [
-        rf'href=["\']/library/{escaped}:([^"\'/?#]+)',
-        rf'href=["\']/library/{escaped}%3A([^"\'/?#]+)',
-    ]
+    family_q = urllib.parse.quote(family, safe="._-")
     tags: list[str] = []
-    for pattern in patterns:
-        for raw in re.findall(pattern, html, flags=re.IGNORECASE):
-            tag = urllib.parse.unquote(raw).strip()
-            if not SAFE_COMPONENT.fullmatch(tag):
-                continue
-            lower = tag.lower()
-            if any(bit in lower for bit in EXCLUDED_TAG_BITS):
-                continue
-            if SIMPLE_TAG.fullmatch(tag) and tag not in tags:
-                tags.append(tag)
+
+    # Use the Docker Registry v2 tags endpoint as the machine-readable source.
+    # Ollama's human-facing tags page changes markup frequently, whereas this API
+    # is also the canonical namespace used for the manifests downloaded below.
+    try:
+        raw = fetch_text(
+            f"https://registry.ollama.ai/v2/library/{family_q}/tags/list",
+            "application/json",
+        )
+        payload = json.loads(raw)
+        candidates = payload.get("tags") or []
+    except Exception as exc:
+        print(f"warning: {family}: registry tag list failed: {exc}", file=sys.stderr)
+        candidates = []
+
+    for raw_tag in candidates:
+        tag = str(raw_tag).strip()
+        if not SAFE_COMPONENT.fullmatch(tag):
+            continue
+        lower = tag.lower()
+        if any(bit in lower for bit in EXCLUDED_TAG_BITS):
+            continue
+        if SIMPLE_TAG.fullmatch(tag) and tag not in tags:
+            tags.append(tag)
+
+    # The page is used only for capabilities/metadata, not for tag discovery.
+    supports_thinking = False
+    try:
+        html = fetch_text(f"https://ollama.com/library/{family_q}/tags")
+        supports_thinking = bool(re.search(r"\bthinking\b", html, flags=re.IGNORECASE))
+    except Exception as exc:
+        print(f"warning: {family}: capability page failed: {exc}", file=sys.stderr)
 
     # Explicit size tags are preferable to aliases like latest because they make
     # the UI understandable and allow stable deduplication.
     tags.sort(key=lambda value: (value.lower() == "latest", tag_size_hint(value), value))
-    return tags[:16], bool(re.search(r"\bthinking\b", html, flags=re.IGNORECASE))
+    return tags[:16], supports_thinking
 
 
 def fetch_manifest(family: str, tag: str) -> dict:
