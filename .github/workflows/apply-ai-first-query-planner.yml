@@ -1,0 +1,59 @@
+name: Apply Android AI-first query planner
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - scripts/apply-ai-first-query-planner.py
+      - .github/workflows/apply-ai-first-query-planner.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Correct prepareFreshModel patch target
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/apply-ai-first-query-planner.py')
+          text = p.read_text(encoding='utf-8')
+          old = """replace_once(
+              ollama,
+              '        onStage: (String) -> Unit,\\n    ) {\\n',
+              '        onStage: (String) -> Unit,\\n        systemPrompt: String = SYSTEM_PROMPT,\\n    ) {\\n',
+          )"""
+          new = """replace_once(
+              ollama,
+              '    private suspend fun prepareFreshModel(\\n        model: OllamaModelSpec,\\n        file: File,\\n        onStage: (String) -> Unit,\\n    ) {\\n',
+              '    private suspend fun prepareFreshModel(\\n        model: OllamaModelSpec,\\n        file: File,\\n        onStage: (String) -> Unit,\\n        systemPrompt: String = SYSTEM_PROMPT,\\n    ) {\\n',
+          )"""
+          if old not in text:
+              raise SystemExit('Expected Ollama patch target was not found')
+          p.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+
+      - name: Apply shared AI-first planner integration
+        run: python scripts/apply-ai-first-query-planner.py
+
+      - name: Commit Android 0.4.0 integration
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          if git diff --cached --quiet; then
+            echo 'No changes to commit.'
+          else
+            git commit -m 'feat: use shared AI-first planner on Android 0.4.0'
+            git push
+          fi
