@@ -1,0 +1,65 @@
+name: Refresh Ollama model catalog
+
+on:
+  schedule:
+    - cron: '41 4 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/update_ollama_catalog.py'
+      - '.github/workflows/ollama-catalog.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ollama-model-catalog
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Discover compatible Ollama models
+        run: python scripts/update_ollama_catalog.py
+
+      - name: Validate catalog
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('app/src/main/assets/ollama_catalog.json')
+          data = json.loads(p.read_text())
+          assert data['schemaVersion'] == 1
+          assert len(data['models']) >= 4
+          ids = [m['id'] for m in data['models']]
+          assert len(ids) == len(set(ids))
+          for m in data['models']:
+              assert m['id'] == f"{m['family']}:{m['tag']}"
+              assert len(m['sha256']) == 64
+              assert 50 * 1024**2 <= int(m['downloadBytes']) <= 24 * 1024**3
+          print(f"validated {len(ids)} models")
+          PY
+
+      - name: Publish catalog update
+        shell: bash
+        run: |
+          if git diff --quiet -- app/src/main/assets/ollama_catalog.json; then
+            echo 'Catalog is already current.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/src/main/assets/ollama_catalog.json
+          git commit -m 'chore: refresh Ollama model catalog [skip ci]'
+          git push origin HEAD:main
