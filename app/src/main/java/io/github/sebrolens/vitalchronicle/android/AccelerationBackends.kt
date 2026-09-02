@@ -69,22 +69,22 @@ object AccelerationDriverCatalog {
     @Volatile private var packagedNativeLibraries: Set<String> = emptySet()
 
     fun ensureInitialized(context: Context) {
-        val context = context.applicationContext
-        appContext = context
-        packagedNativeLibraries = File(context.applicationInfo.nativeLibraryDir)
+        val applicationContext = context.applicationContext
+        appContext = applicationContext
+        packagedNativeLibraries = File(applicationContext.applicationInfo.nativeLibraryDir)
             .listFiles()
             ?.map { it.name.lowercase() }
             ?.toSet()
             .orEmpty()
         if (initialized.compareAndSet(false, true)) {
-            loadCachedCatalog(context)
-            refreshInBackground(context)
+            loadCachedCatalog(applicationContext)
+            refreshInBackground(applicationContext)
         }
     }
 
     fun refreshInBackground(context: Context) {
         if (!refreshing.compareAndSet(false, true)) return
-        val context = context.applicationContext
+        val applicationContext = context.applicationContext
         Thread({
             try {
                 val request = Request.Builder()
@@ -93,13 +93,13 @@ object AccelerationDriverCatalog {
                     .header("Cache-Control", "no-cache")
                     .header("User-Agent", "VitalChronicle-Android/${BuildConfig.VERSION_NAME}")
                     .build()
-                val json = AndroidHttpClient(context).execute(request).use { response ->
+                val json = AndroidHttpClient(applicationContext).execute(request).use { response ->
                     if (!response.isSuccessful) error("Accelerator catalog returned HTTP ${response.code}.")
                     response.body?.string() ?: error("Accelerator catalog response was empty.")
                 }
                 val parsed = parseRemoteCatalog(json)
                 if (parsed.isNotEmpty()) {
-                    context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+                    applicationContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
                         .edit().putString(KEY_CATALOG_JSON, json).apply()
                     mainHandler.post { replaceCatalog(parsed) }
                 }
@@ -259,8 +259,11 @@ object AccelerationDriverCatalog {
             minAppVersion = minAppVersion,
             socHints = item.optJSONArray("socHints").strings(),
             libraryHints = item.optJSONArray("libraryHints").strings(),
-            requiredSystemFeature = item.optString("requiredSystemFeature").trim().ifBlank { null },
-            requiresPackagedBackend = item.optBoolean("requiresPackagedBackend", runtime == AcceleratorRuntime.GGUF && backend != "CPU"),
+            requiredSystemFeature = item.optString("requiredSystemFeature").trim().takeIf { it.isNotBlank() },
+            // A remote metadata catalog can never bypass the native-code check
+            // for downloaded GGUF models. CPU is the only GGUF backend which is
+            // allowed to be intrinsically available.
+            requiresPackagedBackend = runtime == AcceleratorRuntime.GGUF && backend != "CPU",
             description = item.optString("description").trim(),
         )
     }
