@@ -45,6 +45,21 @@ PREFERRED_PREFIXES = (
     "smollm",
 )
 
+# Curated size tags give the user useful choices even if Ollama changes its website
+# markup. Unknown/new families always fall back to `latest`, so discovery remains
+# dynamic rather than requiring an app update for every model generation.
+KNOWN_TAGS: dict[str, list[str]] = {
+    "qwen3": ["0.6b", "1.7b", "4b", "8b", "14b", "30b"],
+    "qwen3.8": ["27b"],
+    "gemma3": ["270m", "1b", "4b", "12b", "27b"],
+    "gemma4": ["e2b", "e4b", "12b", "26b", "31b"],
+    "llama3.2": ["1b", "3b"],
+    "phi4-mini": ["3.8b"],
+    "deepseek-r1": ["1.5b", "7b", "8b", "14b", "32b"],
+    "mistral": ["7b"],
+    "smollm2": ["135m", "360m", "1.7b"],
+}
+
 SAFE_COMPONENT = re.compile(r"^[A-Za-z0-9._-]+$")
 SIMPLE_TAG = re.compile(
     r"^(?:latest|e?\d+(?:\.\d+)?[mb](?:-a\d+(?:\.\d+)?b)?|e?\d+(?:\.\d+)?[mb]-it-qat)$",
@@ -101,30 +116,45 @@ def discover_families() -> tuple[list[str], dict[str, int]]:
 
 
 def discover_tags(family: str) -> tuple[list[str], bool]:
+    tags = list(KNOWN_TAGS.get(family, []))
+    supports_thinking = False
     family_q = urllib.parse.quote(family, safe="._-")
-    html = fetch_text(f"https://ollama.com/library/{family_q}/tags")
-    escaped = re.escape(family)
 
-    # Do not depend on Ollama's current anchor/DOM structure. Family:tag strings
-    # are present in the page's rendered data and links, so extract them wherever
-    # they occur and then apply a strict allow-list to the tag itself.
-    raw_tags = re.findall(rf"{escaped}:([A-Za-z0-9._-]+)", html, flags=re.IGNORECASE)
-    tags: list[str] = []
-    for raw_tag in raw_tags:
-        tag = urllib.parse.unquote(raw_tag).strip()
-        if not SAFE_COMPONENT.fullmatch(tag):
-            continue
-        lower = tag.lower()
-        if any(bit in lower for bit in EXCLUDED_TAG_BITS):
-            continue
-        if SIMPLE_TAG.fullmatch(tag) and tag not in tags:
-            tags.append(tag)
+    # `latest` is the future-proof path: a newly released qwen4/gemma5/etc. can be
+    # admitted as soon as it appears on Ollama's newest-model page, even if the tag
+    # page has changed format. Curated size tags above provide richer choices for
+    # established families.
+    if "latest" not in tags:
+        tags.append("latest")
 
-    # Explicit size tags are preferable to aliases like latest because they make
-    # the UI understandable and allow stable deduplication.
+    # Opportunistically discover additional simple tags, but never depend on this
+    # HTML for the catalog to remain functional.
+    try:
+        html = fetch_text(f"https://ollama.com/library/{family_q}/tags")
+        supports_thinking = bool(re.search(r"\bthinking\b", html, flags=re.IGNORECASE))
+        escaped = re.escape(family)
+        patterns = [
+            rf"{escaped}:([A-Za-z0-9._-]+)",
+            rf"{escaped}%3A([A-Za-z0-9._-]+)",
+            rf"{escaped}&#58;([A-Za-z0-9._-]+)",
+            rf"{escaped}\\u003a([A-Za-z0-9._-]+)",
+        ]
+        for pattern in patterns:
+            for raw_tag in re.findall(pattern, html, flags=re.IGNORECASE):
+                tag = urllib.parse.unquote(raw_tag).strip()
+                lower = tag.lower()
+                if not SAFE_COMPONENT.fullmatch(tag):
+                    continue
+                if any(bit in lower for bit in EXCLUDED_TAG_BITS):
+                    continue
+                if SIMPLE_TAG.fullmatch(tag) and tag not in tags:
+                    tags.append(tag)
+    except Exception as exc:
+        print(f"warning: {family}: tag metadata page failed: {exc}", file=sys.stderr)
+
+    tags = [tag for tag in tags if SAFE_COMPONENT.fullmatch(tag)]
     tags.sort(key=lambda value: (value.lower() == "latest", tag_size_hint(value), value))
-    supports_thinking = bool(re.search(r"\bthinking\b", html, flags=re.IGNORECASE))
-    return tags[:16], supports_thinking
+    return tags[:20], supports_thinking
 
 
 def fetch_manifest(family: str, tag: str) -> dict:
