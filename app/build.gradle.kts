@@ -17,6 +17,7 @@ android {
         applicationId = "io.github.sebrolens.vitalchronicle.android"
         minSdk = 26
         targetSdk = 36
+        // 0.3.4 introduces the dedicated hardware-aware AI model manager.
         versionCode = 21
         versionName = "0.3.4"
         ndk {
