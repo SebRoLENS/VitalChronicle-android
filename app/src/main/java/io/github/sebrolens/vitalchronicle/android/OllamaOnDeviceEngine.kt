@@ -26,6 +26,13 @@ class OllamaOnDeviceEngine(context: Context) {
     private val engineDelegate = lazy { AiChat.getInferenceEngine(context.applicationContext) }
     private val engine: InferenceEngine by engineDelegate
 
+    init {
+        // Start hardware/backend discovery as soon as the local engine exists so
+        // Automatic mode sees refreshed driver availability even if the user has
+        // never opened the AI-models screen.
+        AccelerationDriverCatalog.ensureInitialized(context.applicationContext)
+    }
+
     suspend fun plan(
         model: OllamaModelSpec,
         modelFile: File,
