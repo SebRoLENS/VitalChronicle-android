@@ -44,6 +44,13 @@ jobs:
       - name: Install Android SDK packages
         run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0' 'ndk;29.0.13113456' 'cmake;3.31.6'
 
+      - name: Install Vulkan shader build tools
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y glslc spirv-headers
+          echo "GLSLC_PATH=$(command -v glslc)" >> "$GITHUB_ENV"
+
       - name: Sync canonical shared core
         run: >-
           python scripts/sync_shared_core.py
@@ -56,6 +63,9 @@ jobs:
 
       - name: Test shared AI-first query planner
         run: PYTHONPATH=app/src/main/python python scripts/test_ai_query_planner.py
+
+      - name: Test accelerator catalog and native policy
+        run: python scripts/test_accelerator_catalog.py
 
       - name: Show upstream revision
         run: cat app/src/main/assets/shared_core_revision.json
@@ -85,7 +95,7 @@ jobs:
           test -f "$apk"
           grep -q 'android:extractNativeLibs="true"' app/src/main/AndroidManifest.xml
           entries=$(unzip -Z1 "$apk")
-          for library in libai-chat.so libllama.so libggml.so libggml-cpu-android_armv8.0_1.so; do
+          for library in libai-chat.so libllama.so libggml.so libggml-cpu-android_armv8.0_1.so libggml-vulkan.so; do
             grep -qx "lib/arm64-v8a/$library" <<< "$entries"
           done
 
@@ -138,6 +148,13 @@ jobs:
       - name: Install Android SDK packages
         run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0' 'ndk;29.0.13113456' 'cmake;3.31.6'
 
+      - name: Install Vulkan shader build tools
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y glslc spirv-headers
+          echo "GLSLC_PATH=$(command -v glslc)" >> "$GITHUB_ENV"
+
       - name: Sync canonical shared core
         run: >-
           python scripts/sync_shared_core.py
@@ -150,6 +167,9 @@ jobs:
 
       - name: Test shared AI-first query planner
         run: PYTHONPATH=app/src/main/python python scripts/test_ai_query_planner.py
+
+      - name: Test accelerator catalog and native policy
+        run: python scripts/test_accelerator_catalog.py
 
       - uses: gradle/actions/setup-gradle@v4
         with:

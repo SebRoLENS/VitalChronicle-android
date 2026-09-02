@@ -17,9 +17,9 @@ android {
         applicationId = "io.github.sebrolens.vitalchronicle.android"
         minSdk = 26
         targetSdk = 36
-        // 0.4.1 uses the shared desktop core for five-minute heart-rate averages.
-        versionCode = 24
-        versionName = "0.4.1"
+        // 0.5.0 adds dynamic GPU/NPU driver discovery and Vulkan GGUF offload.
+        versionCode = 25
+        versionName = "0.5.0"
         ndk {
             abiFilters += listOf("arm64-v8a")
         }
@@ -62,9 +62,9 @@ android {
 
     packaging {
         resources.excludes += setOf("META-INF/DEPENDENCIES", "META-INF/LICENSE*", "META-INF/NOTICE*")
-        // llama.cpp discovers the best CPU backend by scanning nativeLibraryDir
-        // at runtime. Legacy JNI packaging guarantees that every ARM variant is
-        // extracted there instead of remaining loadable only from inside the APK.
+        // llama.cpp discovers CPU/GPU backends by scanning nativeLibraryDir at
+        // runtime. Legacy JNI packaging guarantees that dynamically loadable
+        // backend libraries are extracted there instead of staying inside APK.
         jniLibs.useLegacyPackaging = true
     }
 }

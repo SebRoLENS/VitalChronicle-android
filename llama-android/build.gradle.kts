@@ -3,6 +3,8 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+val glslcPath = providers.environmentVariable("GLSLC_PATH").orNull
+
 android {
     namespace = "com.arm.aichat"
     compileSdk = 36
@@ -25,7 +27,16 @@ android {
                     "-DGGML_BACKEND_DL=ON",
                     "-DGGML_CPU_ALL_VARIANTS=ON",
                     "-DGGML_LLAMAFILE=OFF",
+                    // Vendor-neutral Android GPU fallback. ggml builds this as a
+                    // dynamically discoverable backend beside the CPU variants.
+                    "-DGGML_VULKAN=ON",
+                    "-DGGML_VULKAN_RUN_TESTS=OFF",
                 )
+                // Shader compilation runs on the host while the Vulkan headers
+                // and loader are provided by the Android NDK toolchain.
+                glslcPath?.takeIf { it.isNotBlank() }?.let {
+                    arguments += "-DVulkan_GLSLC_EXECUTABLE=$it"
+                }
             }
         }
     }
