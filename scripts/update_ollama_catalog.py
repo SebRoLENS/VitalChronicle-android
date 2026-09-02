@@ -44,6 +44,13 @@ PREFERRED_PREFIXES = (
     "granite",
     "smollm",
 )
+EXCLUDED_FAMILY_BITS = (
+    "embedding",
+    "embed",
+    "rerank",
+    "ocr",
+    "guardian",
+)
 
 # Curated size tags give the user useful choices even if Ollama changes its website
 # markup. Unknown/new families always fall back to `latest`, so discovery remains
@@ -97,13 +104,20 @@ def discover_families() -> tuple[list[str], dict[str, int]]:
         html = fetch_text("https://ollama.com/library?sort=newest")
         for family in re.findall(r'/library/([A-Za-z0-9._-]+)', html):
             family = urllib.parse.unquote(family)
-            if family.lower().startswith(PREFERRED_PREFIXES) and family not in discovered:
+            lower = family.lower()
+            if not lower.startswith(PREFERRED_PREFIXES):
+                continue
+            if any(bit in lower for bit in EXCLUDED_FAMILY_BITS):
+                continue
+            if family not in discovered:
                 discovered.append(family)
     except Exception as exc:
         print(f"warning: newest-family discovery failed: {exc}", file=sys.stderr)
 
-    combined = []
-    for family in discovered + SEED_FAMILIES:
+    # Reserve room for the stable seed families instead of letting a busy newest
+    # page push them out of the catalog entirely.
+    combined: list[str] = []
+    for family in discovered[:18] + SEED_FAMILIES:
         if SAFE_COMPONENT.fullmatch(family) and family not in combined:
             combined.append(family)
 
@@ -112,12 +126,17 @@ def discover_families() -> tuple[list[str], dict[str, int]]:
     rank = {family: max(20, 2000 - index * 50) for index, family in enumerate(discovered)}
     for index, family in enumerate(SEED_FAMILIES):
         rank.setdefault(family, max(10, 100 - index * 5))
-    return combined[:24], rank
+    return combined[:32], rank
 
 
 def discover_tags(family: str) -> tuple[list[str], bool]:
     tags = list(KNOWN_TAGS.get(family, []))
-    supports_thinking = False
+    lower_family = family.lower()
+    supports_thinking = (
+        lower_family.startswith("qwen3")
+        or lower_family in {"gemma4", "deepseek-r1"}
+        or "reasoning" in lower_family
+    )
     family_q = urllib.parse.quote(family, safe="._-")
 
     # `latest` is the future-proof path: a newly released qwen4/gemma5/etc. can be
@@ -131,7 +150,9 @@ def discover_tags(family: str) -> tuple[list[str], bool]:
     # HTML for the catalog to remain functional.
     try:
         html = fetch_text(f"https://ollama.com/library/{family_q}/tags")
-        supports_thinking = bool(re.search(r"\bthinking\b", html, flags=re.IGNORECASE))
+        supports_thinking = supports_thinking or bool(
+            re.search(r"\bthinking\b", html, flags=re.IGNORECASE)
+        )
         escaped = re.escape(family)
         patterns = [
             rf"{escaped}:([A-Za-z0-9._-]+)",
