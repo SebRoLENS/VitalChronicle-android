@@ -25,6 +25,10 @@ android {
                     "-DGGML_BACKEND_DL=ON",
                     "-DGGML_CPU_ALL_VARIANTS=ON",
                     "-DGGML_LLAMAFILE=OFF",
+                    // Vendor-neutral Android GPU fallback. ggml builds this as a
+                    // dynamically discoverable backend beside the CPU variants.
+                    "-DGGML_VULKAN=ON",
+                    "-DGGML_VULKAN_RUN_TESTS=OFF",
                 )
             }
         }
