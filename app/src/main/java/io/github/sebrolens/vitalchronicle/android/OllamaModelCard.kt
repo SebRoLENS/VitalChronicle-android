@@ -62,6 +62,10 @@ fun OllamaModelCard(
             }
             Row(horizontalArrangement=Arrangement.spacedBy(7.dp),verticalAlignment=Alignment.CenterVertically) {
                 if(model.supportsThinking) AssistChip(onClick={},label={Text("Thinking")},leadingIcon={Icon(Icons.Default.Psychology,null)})
+                AssistChip(
+                    onClick={},
+                    label={Text(if(vm.hardware.ggufHardwareAccelerated) "Accelerated · ${vm.hardware.ggufAccelerationBackend}" else "CPU · ${vm.hardware.ggufAccelerationBackend}")}
+                )
                 Text(
                     if(hardwareFit) "Fits this phone" else "Needs about ${model.minimumRamGb} GB RAM",
                     style=MaterialTheme.typography.labelMedium,

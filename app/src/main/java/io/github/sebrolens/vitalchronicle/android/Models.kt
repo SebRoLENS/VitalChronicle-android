@@ -62,7 +62,52 @@ data class HardwareProfile(
     val abi: String,
     val freeStorageBytes: Long,
     val lowRamDevice: Boolean,
-)
+    val socManufacturer: String,
+    val socModel: String,
+    val vulkanCompute: Boolean,
+    val vulkanVersion: Int,
+    val packagedGgufBackends: Set<String>,
+) {
+    val socDescription: String
+        get() = listOf(socManufacturer, socModel)
+            .filter { it.isNotBlank() && !it.equals("unknown", ignoreCase = true) }
+            .joinToString(" ")
+            .ifBlank { "SoC not reported by Android" }
+
+    val ggufHardwareAccelerated: Boolean
+        get() = when {
+            "HEXAGON" in packagedGgufBackends && socManufacturer.contains("qualcomm", ignoreCase = true) -> true
+            "VULKAN" in packagedGgufBackends && vulkanCompute -> true
+            "OPENCL" in packagedGgufBackends -> true
+            else -> false
+        }
+
+    val ggufAccelerationBackend: String
+        get() = when {
+            "HEXAGON" in packagedGgufBackends && socManufacturer.contains("qualcomm", ignoreCase = true) -> "Snapdragon Hexagon NPU"
+            "VULKAN" in packagedGgufBackends && vulkanCompute -> "Vulkan GPU"
+            "OPENCL" in packagedGgufBackends -> "OpenCL GPU"
+            else -> "ARM CPU · KleidiAI"
+        }
+
+    val accelerationSummary: String
+        get() = buildString {
+            append("GGUF: ").append(ggufAccelerationBackend)
+            if (!ggufHardwareAccelerated && vulkanCompute) {
+                append(" · Vulkan compute detected, but this APK has no Vulkan GGUF backend")
+            }
+        }
+}
+
+data class NanoCapability(
+    val supported: Boolean = false,
+    val ready: Boolean = false,
+    val modelName: String? = null,
+    val status: String = "Checking",
+) {
+    val runtimeLabel: String
+        get() = if (supported) "Android AICore · optimized on-device runtime" else "Android AICore unavailable"
+}
 
 fun JSONObject.optNullableString(key: String): String? =
     if (has(key) && !isNull(key)) optString(key).takeIf { it.isNotBlank() } else null

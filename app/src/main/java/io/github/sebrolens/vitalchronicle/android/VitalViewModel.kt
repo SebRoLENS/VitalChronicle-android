@@ -6,6 +6,7 @@ import android.app.ActivityManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -47,6 +48,7 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
     var aiTokensPerSecond by mutableStateOf(0.0); private set
     var aiEngine by mutableStateOf(AiEngine.AUTOMATIC)
     var aiModelName by mutableStateOf<String?>(null); private set
+    var nanoCapability by mutableStateOf(NanoCapability()); private set
     var googleConnected by mutableStateOf(vault.nativeGoogleConnected()); private set
     private var requestedHistoryDays by mutableStateOf(DataRetention.GENERAL_DAYS)
     var historyDays: Int
@@ -68,6 +70,21 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
     val hardware: HardwareProfile = run {
         val am = app.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         val info = ActivityManager.MemoryInfo().also(am::getMemoryInfo)
+        val pm = app.packageManager
+        val nativeLibraries = File(app.applicationInfo.nativeLibraryDir)
+            .listFiles()
+            ?.map { it.name.lowercase() }
+            .orEmpty()
+        val packagedBackends = buildSet {
+            if (nativeLibraries.any { "vulkan" in it }) add("VULKAN")
+            if (nativeLibraries.any { "hexagon" in it || "ggml-htp" in it }) add("HEXAGON")
+            if (nativeLibraries.any { "opencl" in it }) add("OPENCL")
+        }
+        val socManufacturer = if (Build.VERSION.SDK_INT >= 31) Build.SOC_MANUFACTURER else Build.HARDWARE
+        val socModel = if (Build.VERSION.SDK_INT >= 31) Build.SOC_MODEL else Build.BOARD
+        val vulkanVersion = pm.systemAvailableFeatures
+            .firstOrNull { it.name == PackageManager.FEATURE_VULKAN_HARDWARE_VERSION }
+            ?.version ?: 0
         HardwareProfile(
             ramGb = ((info.totalMem + 536_870_912L) / 1_073_741_824L).toInt(),
             cpuThreads = Runtime.getRuntime().availableProcessors(),
@@ -75,10 +92,21 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
             abi = Build.SUPPORTED_ABIS.firstOrNull().orEmpty().ifBlank { "unknown" },
             freeStorageBytes = ollamaModels.freeStorageBytes(),
             lowRamDevice = am.isLowRamDevice,
+            socManufacturer = socManufacturer.ifBlank { "unknown" },
+            socModel = socModel.ifBlank { "unknown" },
+            vulkanCompute = pm.hasSystemFeature(PackageManager.FEATURE_VULKAN_HARDWARE_COMPUTE),
+            vulkanVersion = vulkanVersion,
+            packagedGgufBackends = packagedBackends,
         )
     }
     val ollamaCatalog: List<OllamaModelSpec> = OllamaModelCatalog.models
     val recommendedOllamaModel: OllamaModelSpec = OllamaModelCatalog.recommended(hardware)
+    val recommendedAiPath: String
+        get() = when {
+            nanoCapability.supported -> "${nanoCapability.modelName ?: "Gemini Nano"} · ${nanoCapability.runtimeLabel}"
+            hardware.ggufHardwareAccelerated -> "${recommendedOllamaModel.id} · ${hardware.ggufAccelerationBackend}"
+            else -> "${recommendedOllamaModel.id} · ${hardware.ggufAccelerationBackend}"
+        }
     var selectedOllamaModelId by mutableStateOf(run {
         val persisted = ollamaModels.selectedModelId()
         val persistedModel = ollamaCatalog.firstOrNull { it.id == persisted }
@@ -354,7 +382,7 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
                     val selectedModel = ollamaCatalog.first { it.id == selectedOllamaModelId }
                     val installedModel = ollamaModels.installedFile(selectedModel)
                     val useDownloadedModel = aiEngine == AiEngine.OLLAMA_LOCAL ||
-                        (aiEngine == AiEngine.AUTOMATIC && installedModel != null)
+                        (aiEngine == AiEngine.AUTOMATIC && installedModel != null && hardware.ggufHardwareAccelerated)
 
                     if (useDownloadedModel) {
                         if (installedModel == null) {
@@ -427,10 +455,40 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
         } catch (e: CancellationException) {
             throw e
         } catch (e: LinkageError) {
-            useDeterministicFallback(e, ollamaFailure, databasePath, start, end)
+            fallbackAfterNano(e, ollamaFailure, question, evidence, databasePath, start, end)
         } catch (e: Exception) {
-            useDeterministicFallback(e, ollamaFailure, databasePath, start, end)
+            fallbackAfterNano(e, ollamaFailure, question, evidence, databasePath, start, end)
         }
+    }
+
+    private suspend fun fallbackAfterNano(
+        nanoFailure: Throwable,
+        earlierOllamaFailure: Throwable?,
+        question: String,
+        evidence: String,
+        databasePath: String,
+        start: String,
+        end: String,
+    ) {
+        if (aiEngine == AiEngine.GEMINI_NANO) throw nanoFailure
+        if (aiEngine == AiEngine.AUTOMATIC && earlierOllamaFailure == null) {
+            val selected = ollamaCatalog.firstOrNull { it.id == selectedOllamaModelId }
+            val installed = selected?.let(ollamaModels::installedFile)
+            if (selected != null && installed != null) {
+                status = "Accelerated Android AI unavailable · trying ${selected.id} on ${hardware.ggufAccelerationBackend}…"
+                try {
+                    analyseWithOllama(selected, installed, question, evidence)
+                    return
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    if (e is VirtualMachineError || e is ThreadDeath) throw e
+                    useDeterministicFallback(e, nanoFailure, databasePath, start, end)
+                    return
+                }
+            }
+        }
+        useDeterministicFallback(nanoFailure, earlierOllamaFailure, databasePath, start, end)
     }
 
     private suspend fun useDeterministicFallback(
@@ -483,12 +541,20 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun probeAi() {
-        val selected = ollamaCatalog.firstOrNull { it.id == selectedOllamaModelId }
-        if (selected != null && ollamaModels.installedFile(selected) != null) {
-            aiModelName = "${selected.id} · on-device llama.cpp"
-            return
+        viewModelScope.launch {
+            nanoCapability = nano.capability()
+            val selected = ollamaCatalog.firstOrNull { it.id == selectedOllamaModelId }
+            val installed = selected?.let(ollamaModels::installedFile)
+            aiModelName = when {
+                selected != null && installed != null && hardware.ggufHardwareAccelerated ->
+                    "${selected.id} · ${hardware.ggufAccelerationBackend}"
+                nanoCapability.supported ->
+                    "${nanoCapability.modelName ?: "Gemini Nano"} · Android AICore"
+                selected != null && installed != null ->
+                    "${selected.id} · ${hardware.ggufAccelerationBackend}"
+                else -> null
+            }
         }
-        viewModelScope.launch { aiModelName = nano.modelName() }
     }
 
     private fun launchBusy(initial: String, block: suspend () -> Unit): Job? {

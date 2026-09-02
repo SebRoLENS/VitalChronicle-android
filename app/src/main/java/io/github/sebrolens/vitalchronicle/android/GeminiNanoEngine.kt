@@ -39,14 +39,29 @@ class GeminiNanoEngine {
         val accurate: Boolean,
     )
 
-    suspend fun modelName(): String? = runCatching {
-        val selection = selectModel(allowDownload = false)
-        if (selection.model.checkStatus() == FeatureStatus.AVAILABLE) {
-            "${selection.model.getBaseModelName()} · ${selection.profile}"
-        } else {
-            null
+    suspend fun capability(): NanoCapability {
+        val candidates = listOf(
+            Triple(accurateModel, "Accurate local · FULL", true),
+            Triple(compatibleModel, "Accurate local · compatible", false),
+        )
+        for ((model, profile, _) in candidates) {
+            val status = runCatching { model.checkStatus() }.getOrNull() ?: continue
+            val supported = status == FeatureStatus.AVAILABLE ||
+                status == FeatureStatus.DOWNLOADABLE ||
+                status == FeatureStatus.DOWNLOADING
+            if (!supported) continue
+            val name = runCatching { model.getBaseModelName() }.getOrNull()
+            return NanoCapability(
+                supported = true,
+                ready = status == FeatureStatus.AVAILABLE,
+                modelName = name?.let { "$it · $profile" } ?: profile,
+                status = status.toString(),
+            )
         }
-    }.getOrNull()
+        return NanoCapability(status = "Unavailable")
+    }
+
+    suspend fun modelName(): String? = capability().takeIf { it.ready }?.modelName
 
     private suspend fun selectModel(allowDownload: Boolean): ModelSelection {
         val accurateStatus = runCatching { accurateModel.checkStatus() }.getOrNull()
