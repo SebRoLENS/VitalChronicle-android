@@ -48,7 +48,7 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y glslc
+          sudo apt-get install -y glslc spirv-headers
           echo "GLSLC_PATH=$(command -v glslc)" >> "$GITHUB_ENV"
 
       - name: Sync canonical shared core
@@ -152,7 +152,7 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y glslc
+          sudo apt-get install -y glslc spirv-headers
           echo "GLSLC_PATH=$(command -v glslc)" >> "$GITHUB_ENV"
 
       - name: Sync canonical shared core
