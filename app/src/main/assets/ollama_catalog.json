@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-02T07:45:00+00:00",
+  "source": "https://ollama.com/library",
+  "models": [
+    {
+      "id": "qwen3:0.6b",
+      "family": "qwen3",
+      "tag": "0.6b",
+      "displayName": "Qwen 3 · Compact",
+      "parameterCount": "0.6B",
+      "downloadBytes": 522640096,
+      "sha256": "7f4030143c1c477224c5434f8272c662a8b042079a0a584f0a27a1684fe2e1fa",
+      "minimumRamGb": 4,
+      "supportsThinking": true,
+      "catalogRank": 10
+    },
+    {
+      "id": "qwen3:1.7b",
+      "family": "qwen3",
+      "tag": "1.7b",
+      "displayName": "Qwen 3 · Balanced",
+      "parameterCount": "1.7B",
+      "downloadBytes": 1359279776,
+      "sha256": "3d0b790534fe4b79525fc3692950408dca41171676ed7e21db57af5c65ef6ab6",
+      "minimumRamGb": 6,
+      "supportsThinking": true,
+      "catalogRank": 10
+    },
+    {
+      "id": "qwen3:4b",
+      "family": "qwen3",
+      "tag": "4b",
+      "displayName": "Qwen 3 · Accurate",
+      "parameterCount": "4B",
+      "downloadBytes": 2497280480,
+      "sha256": "3e4cb14174460404e7a233e531675303b2fbf7749c02f91864fe311ab6344e4f",
+      "minimumRamGb": 10,
+      "supportsThinking": true,
+      "catalogRank": 10
+    },
+    {
+      "id": "qwen3:8b",
+      "family": "qwen3",
+      "tag": "8b",
+      "displayName": "Qwen 3 · Maximum",
+      "parameterCount": "8B",
+      "downloadBytes": 5225374496,
+      "sha256": "a3de86cd1c132c822487ededd47a324c50491393e6565cd14bafa40d0b8e686f",
+      "minimumRamGb": 16,
+      "supportsThinking": true,
+      "catalogRank": 10
+    }
+  ]
+}
