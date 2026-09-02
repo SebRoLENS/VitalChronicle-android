@@ -3,7 +3,6 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-val spirvHeadersDir = providers.environmentVariable("SPIRV_HEADERS_DIR").orNull
 val glslcPath = providers.environmentVariable("GLSLC_PATH").orNull
 
 android {
@@ -33,12 +32,8 @@ android {
                     "-DGGML_VULKAN=ON",
                     "-DGGML_VULKAN_RUN_TESTS=OFF",
                 )
-                // Cross-compiling Vulkan needs host shader tools. CI resolves
-                // these paths from installed packages; local builds can either
-                // set the same variables or let CMake discover an installed SDK.
-                spirvHeadersDir?.takeIf { it.isNotBlank() }?.let {
-                    arguments += "-DSPIRV-Headers_DIR=$it"
-                }
+                // Shader compilation runs on the host while the Vulkan headers
+                // and loader are provided by the Android NDK toolchain.
                 glslcPath?.takeIf { it.isNotBlank() }?.let {
                     arguments += "-DVulkan_GLSLC_EXECUTABLE=$it"
                 }
