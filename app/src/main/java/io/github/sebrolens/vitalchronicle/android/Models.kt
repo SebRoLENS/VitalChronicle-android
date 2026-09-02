@@ -74,28 +74,22 @@ data class HardwareProfile(
             .joinToString(" ")
             .ifBlank { "SoC not reported by Android" }
 
+    val ggufDriverStatus: AccelerationDriverStatus
+        get() = AccelerationDriverCatalog.recommendedGguf(this)
+
     val ggufHardwareAccelerated: Boolean
-        get() = when {
-            "HEXAGON" in packagedGgufBackends && socManufacturer.contains("qualcomm", ignoreCase = true) -> true
-            "VULKAN" in packagedGgufBackends && vulkanCompute -> true
-            "OPENCL" in packagedGgufBackends -> true
-            else -> false
-        }
+        get() = ggufDriverStatus.available && ggufDriverStatus.spec.kind != AcceleratorKind.CPU
 
     val ggufAccelerationBackend: String
-        get() = when {
-            "HEXAGON" in packagedGgufBackends && socManufacturer.contains("qualcomm", ignoreCase = true) -> "Snapdragon Hexagon NPU"
-            "VULKAN" in packagedGgufBackends && vulkanCompute -> "Vulkan GPU"
-            "OPENCL" in packagedGgufBackends -> "OpenCL GPU"
-            else -> "ARM CPU · KleidiAI"
-        }
+        get() = ggufDriverStatus.spec.title
 
     val accelerationSummary: String
         get() = buildString {
-            append("GGUF: ").append(ggufAccelerationBackend)
-            if (!ggufHardwareAccelerated && vulkanCompute) {
-                append(" · Vulkan compute detected, but this APK has no Vulkan GGUF backend")
-            }
+            val selected = ggufDriverStatus
+            append("GGUF: ").append(selected.spec.title)
+            append(" · ").append(selected.availabilityLabel)
+            append(" · ").append(selected.scopeLabel)
+            if (selected.reason.isNotBlank()) append(" · ").append(selected.reason)
         }
 }
 
