@@ -467,13 +467,13 @@ enum class Screen(val label: String, val icon: ImageVector) {
         }
 
         item { Card { Column {
-            ListItem(headlineContent={Text("Advanced settings")},supportingContent={Text("Hardware, analysis window and explicit engine override")},trailingContent={Icon(if(vm.advancedOpen) Icons.Default.ExpandLess else Icons.Default.ExpandMore,null)},modifier=Modifier.clickable{vm.advancedOpen=!vm.advancedOpen})
+            ListItem(headlineContent={Text("Advanced settings")},supportingContent={Text("Hardware and explicit engine override · analysis scope is selected by the AI planner")},trailingContent={Icon(if(vm.advancedOpen) Icons.Default.ExpandLess else Icons.Default.ExpandMore,null)},modifier=Modifier.clickable{vm.advancedOpen=!vm.advancedOpen})
             AnimatedVisibility(vm.advancedOpen) { Column(Modifier.padding(start=16.dp,end=16.dp,bottom=16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
                 Text("${vm.hardware.device} · ${vm.hardware.socDescription} · ${vm.hardware.ramGb} GB RAM · ${vm.hardware.cpuThreads} CPU threads · ${vm.hardware.abi}",style=MaterialTheme.typography.bodySmall)
                 Text(vm.hardware.accelerationSummary,style=MaterialTheme.typography.bodySmall)
                 Text("Gemini Nano · ${if(vm.nanoCapability.supported) vm.nanoCapability.runtimeLabel else vm.nanoCapability.status}",style=MaterialTheme.typography.bodySmall)
                 Text("Model storage available at launch · ${formatBytes(vm.hardware.freeStorageBytes)}${if(vm.hardware.lowRamDevice) " · Android low-RAM device" else ""}",style=MaterialTheme.typography.bodySmall)
-                Text("Analysis interval",fontWeight=FontWeight.Medium); Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){listOf(7,28,90).forEach{d->FilterChip(selected=vm.analysisDays==d,onClick={vm.analysisDays=d},label={Text("${d}d")})}}
+                Text("Analysis scope is chosen automatically from the question and available local data.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("Ollama downloads are SHA-256 verified. Gemini Nano availability is verified at runtime by ML Kit. Unsupported runtimes retain deterministic analysis.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             } }
         } } }
