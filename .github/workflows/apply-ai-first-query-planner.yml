@@ -45,6 +45,13 @@ jobs:
       - name: Apply shared AI-first planner integration
         run: python scripts/apply-ai-first-query-planner.py
 
+      - name: Keep workflow helpers out of generated commit
+        shell: bash
+        run: |
+          git checkout HEAD -- .github/workflows/android.yml
+          git checkout HEAD -- .github/workflows/apply-ai-first-query-planner.yml
+          git checkout HEAD -- scripts/apply-ai-first-query-planner.py
+
       - name: Commit Android 0.4.0 integration
         shell: bash
         run: |
