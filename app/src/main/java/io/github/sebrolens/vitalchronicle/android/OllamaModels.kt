@@ -1,12 +1,16 @@
 package io.github.sebrolens.vitalchronicle.android
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.os.StatFs
+import androidx.compose.runtime.mutableStateListOf
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import okhttp3.Request
+import org.json.JSONObject
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -23,6 +27,7 @@ data class OllamaModelSpec(
     val sha256: String,
     val minimumRamGb: Int,
     val supportsThinking: Boolean,
+    val catalogRank: Int = 0,
 ) {
     val registryUrl: String
         get() = "https://registry.ollama.ai/v2/library/$family/blobs/sha256:$sha256"
@@ -32,10 +37,81 @@ data class OllamaModelSpec(
 }
 
 object OllamaModelCatalog {
-    // These are the Q4_K_M GGUF layers behind the corresponding official
-    // Ollama tags. Digests pin the exact artifact and make every download
-    // independently verifiable before llama.cpp is allowed to open it.
-    val models = listOf(
+    /**
+     * Safe built-in fallback. The live catalog is downloaded from this repository
+     * and merged into this SnapshotStateList, so Settings can show newly released
+     * compatible models without requiring a new APK. Downloads themselves always
+     * come from registry.ollama.ai and are SHA-256 verified before llama.cpp opens
+     * the file.
+     */
+    val models = mutableStateListOf<OllamaModelSpec>().apply { addAll(fallbackModels()) }
+
+    fun recommended(hardware: HardwareProfile): OllamaModelSpec {
+        if (hardware.lowRamDevice) return models.minByOrNull { it.downloadBytes } ?: fallbackModels().first()
+        val storageAllowance = hardware.freeStorageBytes - MODEL_STORAGE_RESERVE_BYTES
+        val candidates = models.filter {
+            hardware.ramGb >= it.minimumRamGb && storageAllowance >= it.downloadBytes
+        }
+        return candidates.maxWithOrNull(
+            compareBy<OllamaModelSpec> { it.catalogRank }
+                .thenBy { it.downloadBytes }
+        ) ?: models.minByOrNull { it.downloadBytes } ?: fallbackModels().first()
+    }
+
+    fun replaceWithRemoteCatalog(rawJson: String): Int {
+        val root = JSONObject(rawJson)
+        val remote = root.getJSONArray("models")
+        val parsed = buildList {
+            for (index in 0 until remote.length()) {
+                val item = remote.optJSONObject(index) ?: continue
+                parseRemoteModel(item)?.let(::add)
+            }
+        }
+        if (parsed.isEmpty()) return 0
+
+        val merged = LinkedHashMap<String, OllamaModelSpec>()
+        fallbackModels().forEach { merged[it.id] = it }
+        parsed.forEach { merged[it.id] = it }
+        val next = merged.values
+            .sortedWith(
+                compareByDescending<OllamaModelSpec> { it.catalogRank }
+                    .thenBy { it.downloadBytes }
+                    .thenBy { it.id }
+            )
+
+        models.clear()
+        models.addAll(next)
+        return parsed.size
+    }
+
+    private fun parseRemoteModel(item: JSONObject): OllamaModelSpec? {
+        val id = item.optString("id").trim()
+        val family = item.optString("family").trim()
+        val tag = item.optString("tag").trim()
+        val sha256 = item.optString("sha256").trim().lowercase()
+        val downloadBytes = item.optLong("downloadBytes", -1L)
+        if (!SAFE_COMPONENT.matches(family) || !SAFE_COMPONENT.matches(tag)) return null
+        if (id != "$family:$tag") return null
+        if (!SHA256.matches(sha256)) return null
+        if (downloadBytes !in MIN_MODEL_BYTES..MAX_MODEL_BYTES) return null
+
+        val parameterCount = item.optString("parameterCount").trim().ifBlank { "Unknown" }
+        val minimumRamGb = item.optInt("minimumRamGb", estimateMinimumRamGb(downloadBytes)).coerceIn(4, 64)
+        return OllamaModelSpec(
+            id = id,
+            family = family,
+            tag = tag,
+            displayName = item.optString("displayName").trim().ifBlank { prettyName(family, tag) },
+            parameterCount = parameterCount,
+            downloadBytes = downloadBytes,
+            sha256 = sha256,
+            minimumRamGb = minimumRamGb,
+            supportsThinking = item.optBoolean("supportsThinking", false),
+            catalogRank = item.optInt("catalogRank", 0).coerceAtLeast(0),
+        )
+    }
+
+    private fun fallbackModels() = listOf(
         OllamaModelSpec(
             id = "qwen3:0.6b",
             family = "qwen3",
@@ -46,6 +122,7 @@ object OllamaModelCatalog {
             sha256 = "7f4030143c1c477224c5434f8272c662a8b042079a0a584f0a27a1684fe2e1fa",
             minimumRamGb = 4,
             supportsThinking = true,
+            catalogRank = 10,
         ),
         OllamaModelSpec(
             id = "qwen3:1.7b",
@@ -57,6 +134,7 @@ object OllamaModelCatalog {
             sha256 = "3d0b790534fe4b79525fc3692950408dca41171676ed7e21db57af5c65ef6ab6",
             minimumRamGb = 6,
             supportsThinking = true,
+            catalogRank = 10,
         ),
         OllamaModelSpec(
             id = "qwen3:4b",
@@ -68,6 +146,7 @@ object OllamaModelCatalog {
             sha256 = "3e4cb14174460404e7a233e531675303b2fbf7749c02f91864fe311ab6344e4f",
             minimumRamGb = 10,
             supportsThinking = true,
+            catalogRank = 10,
         ),
         OllamaModelSpec(
             id = "qwen3:8b",
@@ -79,17 +158,42 @@ object OllamaModelCatalog {
             sha256 = "a3de86cd1c132c822487ededd47a324c50491393e6565cd14bafa40d0b8e686f",
             minimumRamGb = 16,
             supportsThinking = true,
+            catalogRank = 10,
         ),
     )
 
-    fun recommended(hardware: HardwareProfile): OllamaModelSpec {
-        if (hardware.lowRamDevice) return models.first()
-        val storageAllowance = hardware.freeStorageBytes - MODEL_STORAGE_RESERVE_BYTES
-        return models.lastOrNull {
-            hardware.ramGb >= it.minimumRamGb && storageAllowance >= it.downloadBytes
-        } ?: models.first()
+    fun estimateMinimumRamGb(downloadBytes: Long): Int {
+        val gib = downloadBytes / 1_073_741_824.0
+        return when {
+            gib <= 0.8 -> 4
+            gib <= 1.8 -> 6
+            gib <= 3.5 -> 8
+            gib <= 5.8 -> 10
+            gib <= 8.5 -> 14
+            gib <= 12.5 -> 18
+            gib <= 19.5 -> 24
+            else -> 32
+        }
     }
 
+    fun prettyName(family: String, tag: String): String {
+        val name = family
+            .replace(Regex("^qwen", RegexOption.IGNORE_CASE), "Qwen ")
+            .replace(Regex("^gemma", RegexOption.IGNORE_CASE), "Gemma ")
+            .replace(Regex("^llama", RegexOption.IGNORE_CASE), "Llama ")
+            .replace(Regex("^phi", RegexOption.IGNORE_CASE), "Phi ")
+            .replace(Regex("^deepseek", RegexOption.IGNORE_CASE), "DeepSeek ")
+            .replace(Regex("^mistral", RegexOption.IGNORE_CASE), "Mistral ")
+            .replace(Regex("^granite", RegexOption.IGNORE_CASE), "Granite ")
+            .replace(Regex("^smollm", RegexOption.IGNORE_CASE), "SmolLM ")
+            .trim()
+        return "$name · $tag"
+    }
+
+    private val SAFE_COMPONENT = Regex("^[A-Za-z0-9._-]+$")
+    private val SHA256 = Regex("^[a-f0-9]{64}$")
+    private const val MIN_MODEL_BYTES = 50L * 1024L * 1024L
+    private const val MAX_MODEL_BYTES = 24L * 1024L * 1024L * 1024L
     private const val MODEL_STORAGE_RESERVE_BYTES = 768L * 1024L * 1024L
 }
 
@@ -108,9 +212,15 @@ class OllamaModelManager(
 ) {
     private val appContext = context.applicationContext
     private val preferences = appContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+    private val mainHandler = Handler(Looper.getMainLooper())
     val modelDirectory: File =
         (appContext.getExternalFilesDir(MODEL_DIRECTORY) ?: File(appContext.filesDir, MODEL_DIRECTORY))
             .also { it.mkdirs() }
+
+    init {
+        loadCachedCatalog()
+        refreshCatalogInBackground()
+    }
 
     fun freeStorageBytes(): Long = StatFs(modelDirectory.absolutePath).availableBytes
 
@@ -168,8 +278,6 @@ class OllamaModelManager(
                     if (!response.isSuccessful) error("Ollama registry returned HTTP ${response.code}.")
                     val append = existingBytes > 0L && response.code == 206
                     if (!append) {
-                        // Some CDNs do not honour Range. Restart safely and account for
-                        // the space which becomes available when the partial is truncated.
                         require(freeStorageBytes() + existingBytes >= model.downloadBytes + DOWNLOAD_STORAGE_RESERVE_BYTES) {
                             "Not enough free storage to restart this model download."
                         }
@@ -244,6 +352,32 @@ class OllamaModelManager(
         if (selectedModelId() == model.id) preferences.edit().remove(KEY_SELECTED_MODEL).apply()
     }
 
+    private fun loadCachedCatalog() {
+        val cached = preferences.getString(KEY_CATALOG_JSON, null) ?: return
+        runCatching { OllamaModelCatalog.replaceWithRemoteCatalog(cached) }
+    }
+
+    private fun refreshCatalogInBackground() {
+        Thread({
+            runCatching {
+                val request = Request.Builder()
+                    .url(REMOTE_CATALOG_URL)
+                    .header("Accept", "application/json")
+                    .header("Cache-Control", "no-cache")
+                    .header("User-Agent", "VitalChronicle-Android/${BuildConfig.VERSION_NAME}")
+                    .build()
+                val json = http.execute(request).use { response ->
+                    if (!response.isSuccessful) error("Model catalog returned HTTP ${response.code}.")
+                    response.body?.string() ?: error("Model catalog response was empty.")
+                }
+                // Validate completely before caching or exposing the new entries.
+                JSONObject(json).getJSONArray("models")
+                preferences.edit().putString(KEY_CATALOG_JSON, json).apply()
+                mainHandler.post { runCatching { OllamaModelCatalog.replaceWithRemoteCatalog(json) } }
+            }
+        }, "VitalChronicle-model-catalog").apply { isDaemon = true }.start()
+    }
+
     private fun partialFile(model: OllamaModelSpec) = File(modelDirectory, "${model.fileName}.part")
 
     private fun sha256(file: File): String {
@@ -262,7 +396,10 @@ class OllamaModelManager(
     companion object {
         private const val PREFERENCES_NAME = "ollama_models"
         private const val KEY_SELECTED_MODEL = "selected_model"
+        private const val KEY_CATALOG_JSON = "remote_catalog_json"
         private const val MODEL_DIRECTORY = "ollama-models"
+        private const val REMOTE_CATALOG_URL =
+            "https://raw.githubusercontent.com/SebRoLENS/VitalChronicle-android/main/app/src/main/assets/ollama_catalog.json"
         private const val DOWNLOAD_BUFFER_BYTES = 1024 * 1024
         private const val DIGEST_BUFFER_BYTES = 4 * 1024 * 1024
         private const val DOWNLOAD_STORAGE_RESERVE_BYTES = 512L * 1024L * 1024L
