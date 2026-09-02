@@ -17,7 +17,7 @@ android {
         applicationId = "io.github.sebrolens.vitalchronicle.android"
         minSdk = 26
         targetSdk = 36
-        // 0.4.0 adds shared AI-first query planning and dynamic evidence windows.
+        // 0.4.0 shares AI-first query planning and dynamic evidence windows with desktop.
         versionCode = 23
         versionName = "0.4.0"
         ndk {
