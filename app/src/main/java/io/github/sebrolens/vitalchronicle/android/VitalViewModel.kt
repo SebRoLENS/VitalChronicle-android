@@ -54,7 +54,8 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
     var historyDays: Int
         get() = requestedHistoryDays
         set(value) { requestedHistoryDays = value.coerceIn(1, DataRetention.GENERAL_DAYS) }
-    var analysisDays by mutableStateOf(28)
+    var analysisPlanSummary by mutableStateOf<String?>(null); private set
+    var analysisPlanReason by mutableStateOf<String?>(null); private set
     var advancedOpen by mutableStateOf(false)
     var lastError by mutableStateOf<String?>(null); private set
     var updateState by mutableStateOf<AppUpdateState>(AppUpdateState.Idle); private set
@@ -357,51 +358,113 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
     fun analyse(question: String) {
         if (question.isBlank()) return
         resetStreamingAnswer()
-        analysisJob = launchBusy("Preparing deterministic evidence…") {
-            val today = LocalDate.now()
-            val start = today.minusDays((analysisDays - 1).toLong()).toString()
-            val end = today.plusDays(1).toString()
+        analysisJob = launchBusy("Letting the local AI choose the evidence it needs…") {
             val databasePath = withContext(Dispatchers.IO) { database.readableDatabase.path }
+            val catalog = withContext(Dispatchers.Default) {
+                core.aiPlannerCatalogFromDatabase(databasePath)
+            }
+            val plannerRequest = withContext(Dispatchers.Default) {
+                core.aiPlannerRequest(catalog, question)
+            }
+            val selectedModel = ollamaCatalog.first { it.id == selectedOllamaModelId }
+            val installedModel = ollamaModels.installedFile(selectedModel)
+            val preferDownloadedModel = aiEngine == AiEngine.OLLAMA_LOCAL ||
+                (
+                    aiEngine == AiEngine.AUTOMATIC &&
+                        installedModel != null &&
+                        (hardware.ggufHardwareAccelerated || !nanoCapability.supported)
+                )
 
-            when (aiEngine) {
-                AiEngine.DETERMINISTIC -> {
-                    status = "Computing deterministic metrics directly from the local archive…"
-                    val evidence = withContext(Dispatchers.Default) {
-                        core.evidenceFromDatabase(databasePath, start, end)
+            val rawPlan = when (aiEngine) {
+                AiEngine.DETERMINISTIC -> ""
+                AiEngine.OLLAMA_LOCAL -> {
+                    if (installedModel == null) {
+                        error("Download and select an Ollama model from Settings before using this engine.")
                     }
-                    aiAnswer = deterministicSummary(evidence)
-                    status = "Deterministic analysis complete"
+                    try {
+                        ollama.plan(selectedModel, installedModel, plannerRequest) { status = it }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Throwable) {
+                        if (e is VirtualMachineError || e is ThreadDeath) throw e
+                        status = "Planner unavailable · using the safe shared-core fallback…"
+                        ""
+                    }
                 }
-
-                AiEngine.OLLAMA_LOCAL, AiEngine.AUTOMATIC, AiEngine.GEMINI_NANO -> {
-                    status = "Selecting deterministic evidence relevant to your question…"
-                    val modelEvidence = withContext(Dispatchers.Default) {
-                        core.nanoEvidenceFromDatabase(databasePath, start, end, question)
+                AiEngine.GEMINI_NANO -> {
+                    try {
+                        nano.plan(plannerRequest) { status = it }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Throwable) {
+                        status = "Planner unavailable · using the safe shared-core fallback…"
+                        ""
                     }
-
-                    val selectedModel = ollamaCatalog.first { it.id == selectedOllamaModelId }
-                    val installedModel = ollamaModels.installedFile(selectedModel)
-                    val useDownloadedModel = aiEngine == AiEngine.OLLAMA_LOCAL ||
-                        (aiEngine == AiEngine.AUTOMATIC && installedModel != null && hardware.ggufHardwareAccelerated)
-
-                    if (useDownloadedModel) {
-                        if (installedModel == null) {
-                            error("Download and select an Ollama model from Settings before using this engine.")
-                        }
+                }
+                AiEngine.AUTOMATIC -> {
+                    if (preferDownloadedModel && installedModel != null) {
                         try {
-                            analyseWithOllama(selectedModel, installedModel, question, modelEvidence)
+                            ollama.plan(selectedModel, installedModel, plannerRequest) { status = it }
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: Throwable) {
                             if (e is VirtualMachineError || e is ThreadDeath) throw e
-                            if (aiEngine == AiEngine.OLLAMA_LOCAL) throw e
-                            status = "Downloaded model unavailable · trying Gemini Nano…"
-                            analyseWithNanoOrFallback(e, question, modelEvidence, databasePath, start, end)
+                            status = "Downloaded-model planner unavailable · trying Android AI planner…"
+                            try {
+                                nano.plan(plannerRequest) { status = it }
+                            } catch (_: Throwable) {
+                                ""
+                            }
                         }
                     } else {
-                        analyseWithNanoOrFallback(null, question, modelEvidence, databasePath, start, end)
+                        try {
+                            nano.plan(plannerRequest) { status = it }
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (_: Throwable) {
+                            if (installedModel != null) {
+                                try {
+                                    ollama.plan(selectedModel, installedModel, plannerRequest) { status = it }
+                                } catch (_: Throwable) {
+                                    ""
+                                }
+                            } else ""
+                        }
                     }
                 }
+            }
+
+            status = "Python is validating the AI request and extracting only those data…"
+            val planJson = withContext(Dispatchers.Default) {
+                core.resolveAiPlan(catalog, rawPlan)
+            }
+            updateAnalysisPlan(planJson)
+            val modelEvidence = withContext(Dispatchers.Default) {
+                core.plannedEvidenceFromDatabase(databasePath, planJson)
+            }
+
+            if (aiEngine == AiEngine.DETERMINISTIC) {
+                aiAnswer = deterministicSummary(modelEvidence)
+                status = "Deterministic planned analysis complete"
+                return@launchBusy
+            }
+
+            if (preferDownloadedModel) {
+                if (installedModel == null) {
+                    error("Download and select an Ollama model from Settings before using this engine.")
+                }
+                try {
+                    analyseWithOllama(selectedModel, installedModel, question, modelEvidence)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    if (e is VirtualMachineError || e is ThreadDeath) throw e
+                    if (aiEngine == AiEngine.OLLAMA_LOCAL) throw e
+                    status = "Downloaded model unavailable · trying Gemini Nano…"
+                    analyseWithNanoOrFallback(e, question, modelEvidence)
+                }
+            } else {
+                analyseWithNanoOrFallback(null, question, modelEvidence)
             }
         }
     }
@@ -443,9 +506,6 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
         ollamaFailure: Throwable?,
         question: String,
         evidence: String,
-        databasePath: String,
-        start: String,
-        end: String,
     ) {
         try {
             val result = nano.answer(question, evidence) { status = it }
@@ -455,9 +515,9 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
         } catch (e: CancellationException) {
             throw e
         } catch (e: LinkageError) {
-            fallbackAfterNano(e, ollamaFailure, question, evidence, databasePath, start, end)
+            fallbackAfterNano(e, ollamaFailure, question, evidence)
         } catch (e: Exception) {
-            fallbackAfterNano(e, ollamaFailure, question, evidence, databasePath, start, end)
+            fallbackAfterNano(e, ollamaFailure, question, evidence)
         }
     }
 
@@ -466,16 +526,13 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
         earlierOllamaFailure: Throwable?,
         question: String,
         evidence: String,
-        databasePath: String,
-        start: String,
-        end: String,
     ) {
         if (aiEngine == AiEngine.GEMINI_NANO) throw nanoFailure
         if (aiEngine == AiEngine.AUTOMATIC && earlierOllamaFailure == null) {
             val selected = ollamaCatalog.firstOrNull { it.id == selectedOllamaModelId }
             val installed = selected?.let(ollamaModels::installedFile)
             if (selected != null && installed != null) {
-                status = "Accelerated Android AI unavailable · trying ${selected.id} on ${hardware.ggufAccelerationBackend}…"
+                status = "Android AI unavailable · trying ${selected.id} on ${hardware.ggufAccelerationBackend}…"
                 try {
                     analyseWithOllama(selected, installed, question, evidence)
                     return
@@ -483,34 +540,46 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
                     throw e
                 } catch (e: Throwable) {
                     if (e is VirtualMachineError || e is ThreadDeath) throw e
-                    useDeterministicFallback(e, nanoFailure, databasePath, start, end)
+                    useDeterministicFallback(e, nanoFailure, evidence)
                     return
                 }
             }
         }
-        useDeterministicFallback(nanoFailure, earlierOllamaFailure, databasePath, start, end)
+        useDeterministicFallback(nanoFailure, earlierOllamaFailure, evidence)
     }
 
-    private suspend fun useDeterministicFallback(
+    private fun useDeterministicFallback(
         failure: Throwable,
         earlierFailure: Throwable?,
-        databasePath: String,
-        start: String,
-        end: String,
+        evidence: String,
     ) {
         if (aiEngine == AiEngine.GEMINI_NANO) throw failure
-
-        // Automatic mode remains robust even for binary-linkage failures in a
-        // third-party AI runtime. Fatal VM errors are deliberately not swallowed.
-        status = "Nano unavailable · preparing deterministic fallback…"
-        val evidence = withContext(Dispatchers.Default) {
-            core.evidenceFromDatabase(databasePath, start, end)
-        }
         aiAnswer = deterministicSummary(evidence) +
             "\n\nLocal generative AI is not available: " +
             listOfNotNull(earlierFailure, failure)
                 .joinToString("; ") { it.message ?: it.javaClass.simpleName }
         status = "Deterministic fallback used"
+    }
+
+    private fun updateAnalysisPlan(planJson: String) {
+        val plan = JSONObject(planJson)
+        val labels = plan.optJSONArray("data_labels")
+        val selected = buildList {
+            if (labels != null) {
+                for (i in 0 until labels.length()) {
+                    labels.optString(i).takeIf { it.isNotBlank() }?.let(::add)
+                }
+            }
+        }
+        val days = plan.optInt("days", 0)
+        analysisPlanSummary = buildString {
+            if (days > 0) append(days).append(" days")
+            if (selected.isNotEmpty()) {
+                if (isNotEmpty()) append(" · ")
+                append(selected.joinToString(", "))
+            }
+        }.ifBlank { "AI-selected local evidence" }
+        analysisPlanReason = plan.optString("reason").takeIf { it.isNotBlank() }
     }
 
     private fun resetStreamingAnswer() {
@@ -520,12 +589,14 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
         aiGeneratedTokens = 0
         aiMaximumTokens = 0
         aiTokensPerSecond = 0.0
+        analysisPlanSummary = null
+        analysisPlanReason = null
     }
 
     private fun deterministicSummary(evidence: String): String {
         val root = JSONObject(evidence)
-        val coverage = root.optJSONObject("requested_interval_coverage")
-        val insights = root.optJSONArray("candidate_insights")
+        val coverage = root.optJSONObject("requested_interval_coverage") ?: root.optJSONObject("coverage")
+        val insights = root.optJSONArray("candidate_insights") ?: root.optJSONArray("strongest_evidence")
         return buildString {
             append("Deterministic VitalChronicle evidence\n\n")
             coverage?.optString("coverage_notice")?.takeIf { it.isNotBlank() }?.let { append(it).append("\n\n") }

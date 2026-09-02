@@ -104,6 +104,48 @@ class GeminiNanoEngine {
         return name
     }
 
+    suspend fun plan(plannerRequestJson: String, progress: (String) -> Unit): String {
+        val selection = selectModel(allowDownload = true)
+        return try {
+            planWithModel(selection, plannerRequestJson, progress)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (!selection.accurate) throw e
+            progress("FULL profile unavailable · retrying compatible Gemini Nano planner…")
+            planWithModel(
+                ModelSelection(compatibleModel, "Accurate local · compatible", accurate = false),
+                plannerRequestJson,
+                progress,
+            )
+        }
+    }
+
+    private suspend fun planWithModel(
+        selection: ModelSelection,
+        plannerRequestJson: String,
+        progress: (String) -> Unit,
+    ): String {
+        val model = selection.model
+        val name = prepare(selection, progress)
+        val planner = JSONObject(plannerRequestJson)
+        val system = planner.getString("system")
+        val prompt = planner.getString("prompt")
+        val maxOutput = planner.optInt("max_output_tokens", 560).coerceIn(128, 768)
+        progress("$name · ${selection.profile} · choosing health data and time range…")
+        val request = generateContentRequest(SystemInstruction(system), TextPart(prompt)) {
+            temperature = 0.0f
+            maxOutputTokens = maxOutput
+            candidateCount = 1
+            enableThinking = false
+        }
+        runCatching { model.warmup() }
+        val response = model.generateContent(request)
+        val text = response.candidates.firstOrNull()?.text?.trim().orEmpty()
+        if (text.isBlank()) error("Gemini Nano planner returned an empty response.")
+        return text
+    }
+
     suspend fun answer(question: String, evidenceJson: String, progress: (String) -> Unit): AiResult {
         val selection = selectModel(allowDownload = true)
         return try {

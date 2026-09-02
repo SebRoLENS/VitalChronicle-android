@@ -10,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import org.json.JSONObject
 import java.io.File
 
 data class LocalGenerationSnapshot(
@@ -24,6 +25,27 @@ data class LocalGenerationSnapshot(
 class OllamaOnDeviceEngine(context: Context) {
     private val engineDelegate = lazy { AiChat.getInferenceEngine(context.applicationContext) }
     private val engine: InferenceEngine by engineDelegate
+
+    suspend fun plan(
+        model: OllamaModelSpec,
+        modelFile: File,
+        plannerRequestJson: String,
+        onStage: (String) -> Unit,
+    ): String {
+        require(modelFile.isFile) { "The selected Ollama model is not installed." }
+        val planner = JSONObject(plannerRequestJson)
+        val system = planner.getString("system")
+        val prompt = planner.getString("prompt")
+        val maximumTokens = planner.optInt("max_output_tokens", 560).coerceIn(128, 768)
+        prepareFreshModel(model, modelFile, onStage, systemPrompt = system)
+        val raw = StringBuilder()
+        onStage("${model.id} · choosing health data and time range…")
+        engine.sendUserPrompt(prompt, maximumTokens).collect { raw.append(it) }
+        val parsed = splitThinking(raw.toString())
+        val text = parsed.answer.ifBlank { stripControlTags(raw.toString()).trim() }
+        require(text.isNotBlank()) { "The local model planner returned an empty response." }
+        return text
+    }
 
     suspend fun answer(
         model: OllamaModelSpec,
@@ -79,6 +101,7 @@ class OllamaOnDeviceEngine(context: Context) {
         model: OllamaModelSpec,
         file: File,
         onStage: (String) -> Unit,
+        systemPrompt: String = SYSTEM_PROMPT,
     ) {
         awaitInitialState()
         if (engine.state.value.isModelLoaded) {
@@ -101,7 +124,7 @@ class OllamaOnDeviceEngine(context: Context) {
             )
         }
         onStage("Preparing the private analysis context…")
-        engine.setSystemPrompt(SYSTEM_PROMPT)
+        engine.setSystemPrompt(systemPrompt)
     }
 
     private suspend fun awaitInitialState() {

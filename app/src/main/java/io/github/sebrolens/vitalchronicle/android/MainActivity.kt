@@ -271,7 +271,6 @@ enum class Screen(val label: String, val icon: ImageVector) {
     var thinkingOpen by remember { mutableStateOf(true) }
     LazyColumn(Modifier.fillMaxSize(), contentPadding=PaddingValues(16.dp), verticalArrangement=Arrangement.spacedBy(12.dp)) {
         item { HeroCard("Private local AI", vm.aiModelName?.let{"Active local model · $it"}?:"Download an Ollama model or use Android's built-in Gemini Nano. Health evidence stays on this device.", Icons.Default.AutoAwesome) }
-        item { Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) { listOf(7,28,90).forEach { d -> FilterChip(selected=vm.analysisDays==d,onClick={vm.analysisDays=d},label={Text("${d}d")}) } } }
         item { OutlinedTextField(question,{question=it},label={Text("Ask about your data")},modifier=Modifier.fillMaxWidth(),minLines=3,maxLines=7) }
         item {
             if (vm.busy) {
@@ -294,6 +293,18 @@ enum class Screen(val label: String, val icon: ImageVector) {
                 }
             } }
         }
+        vm.analysisPlanSummary?.let { summary -> item {
+            Card(colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.tertiaryContainer)) {
+                Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                    Text("AI-selected evidence", fontWeight=FontWeight.SemiBold)
+                    Text(summary, style=MaterialTheme.typography.bodySmall)
+                    vm.analysisPlanReason?.let { reason ->
+                        Spacer(Modifier.height(3.dp))
+                        Text(reason, style=MaterialTheme.typography.labelSmall, color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        } }
         if(vm.aiGeneratedTokens > 0) item {
             Card(colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.secondaryContainer)) {
                 Row(Modifier.fillMaxWidth().padding(horizontal=14.dp,vertical=10.dp),verticalAlignment=Alignment.CenterVertically) {
