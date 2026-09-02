@@ -4,6 +4,12 @@ plugins {
 }
 
 val glslcPath = providers.environmentVariable("GLSLC_PATH").orNull
+val spirvHeadersCmakeDir =
+    providers.environmentVariable("SPIRV_HEADERS_CMAKE_DIR").orNull
+        ?.takeIf { it.isNotBlank() }
+        ?: "/usr/share/cmake/SPIRV-Headers".takeIf {
+            file("$it/SPIRV-HeadersConfig.cmake").isFile
+        }
 
 android {
     namespace = "com.arm.aichat"
@@ -36,6 +42,13 @@ android {
                 // and loader are provided by the Android NDK toolchain.
                 glslcPath?.takeIf { it.isNotBlank() }?.let {
                     arguments += "-DVulkan_GLSLC_EXECUTABLE=$it"
+                }
+                // Android's CMake toolchain searches package configs inside the
+                // target sysroot. SPIRV-Headers is a host-side, header-only build
+                // dependency, so explicitly expose its host CMake package when
+                // available (or allow callers to override it via the environment).
+                spirvHeadersCmakeDir?.let {
+                    arguments += "-DSPIRV-Headers_DIR=$it"
                 }
             }
         }
