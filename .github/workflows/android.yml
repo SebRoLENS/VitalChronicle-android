@@ -48,10 +48,7 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y glslc libvulkan-dev spirv-headers
-          spirv_config=$(dpkg -L spirv-headers | grep '/SPIRV-HeadersConfig.cmake$' | head -n 1)
-          test -n "$spirv_config"
-          echo "SPIRV_HEADERS_DIR=$(dirname "$spirv_config")" >> "$GITHUB_ENV"
+          sudo apt-get install -y glslc
           echo "GLSLC_PATH=$(command -v glslc)" >> "$GITHUB_ENV"
 
       - name: Sync canonical shared core
@@ -155,10 +152,7 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y glslc libvulkan-dev spirv-headers
-          spirv_config=$(dpkg -L spirv-headers | grep '/SPIRV-HeadersConfig.cmake$' | head -n 1)
-          test -n "$spirv_config"
-          echo "SPIRV_HEADERS_DIR=$(dirname "$spirv_config")" >> "$GITHUB_ENV"
+          sudo apt-get install -y glslc
           echo "GLSLC_PATH=$(command -v glslc)" >> "$GITHUB_ENV"
 
       - name: Sync canonical shared core
