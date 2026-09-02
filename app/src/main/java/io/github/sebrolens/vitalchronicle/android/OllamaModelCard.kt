@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
@@ -26,8 +25,10 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
@@ -37,6 +38,13 @@ fun OllamaModelCard(
     state: OllamaInstallState,
     vm: VitalViewModel,
 ) {
+    val context = LocalContext.current
+    LaunchedEffect(Unit) {
+        // The AtomicBoolean guard in the catalog makes simultaneous cards share
+        // one refresh request when this screen is opened.
+        AccelerationDriverCatalog.refreshInBackground(context)
+    }
+
     val recommended = model.id == vm.recommendedOllamaModel.id
     val selected = model.id == vm.selectedOllamaModelId && state is OllamaInstallState.Installed
     val hardwareFit = !vm.hardware.lowRamDevice && vm.hardware.ramGb >= model.minimumRamGb
@@ -69,18 +77,19 @@ fun OllamaModelCard(
                 if (model.supportsThinking) AssistChip(onClick = {}, label = { Text("Thinking") }, leadingIcon = { Icon(Icons.Default.Psychology, null) })
                 AssistChip(
                     onClick = {},
-                    label = {
-                        Text(
-                            "${activeDriver.spec.kind.name} · ${activeDriver.spec.title} · ${activeDriver.availabilityLabel}"
-                        )
-                    },
-                )
-                Text(
-                    if (hardwareFit) "Fits this phone" else "Needs about ${model.minimumRamGb} GB RAM",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = if (hardwareFit) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                    label = { Text("${activeDriver.spec.kind.name} · ${activeDriver.availabilityLabel}") },
                 )
             }
+            Text(
+                "Preferred backend · ${activeDriver.spec.title} · ${activeDriver.scopeLabel}",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (activeDriver.available) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                if (hardwareFit) "Fits this phone" else "Needs about ${model.minimumRamGb} GB RAM",
+                style = MaterialTheme.typography.labelMedium,
+                color = if (hardwareFit) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+            )
 
             Text("Acceleration drivers", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelLarge)
             driverStatuses.take(MAX_VISIBLE_DRIVER_ROWS).forEach { driver ->
