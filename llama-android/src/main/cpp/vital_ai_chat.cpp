@@ -71,7 +71,7 @@ static llama_model_params vital_model_default_params() {
     if (!vital_accelerator_devices.empty()) {
         vital_accelerator_devices.push_back(nullptr);
         params.devices = vital_accelerator_devices.data();
-        const auto * preferred = vital_accelerator_devices.front();
+        auto * preferred = vital_accelerator_devices.front();
         __android_log_print(
             ANDROID_LOG_INFO,
             "VitalChronicleAI",
