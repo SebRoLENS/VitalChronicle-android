@@ -18,15 +18,32 @@ if(DEFINED ANDROID_ABI)
 endif()
 
 # Android NDK ships the Vulkan C loader/headers but not Vulkan-Hpp
-# (vulkan/vulkan.hpp), which current llama.cpp requires. Locate a complete
-# Vulkan-Headers installation on the build host. Do not pass /usr/include
-# directly to the Android cross compiler: CMake treats it as an implicit host
-# include path and drops it from the target compile command. Instead, copy only
-# the platform-neutral Vulkan header trees into a private staging directory.
+# (vulkan/vulkan.hpp), which current llama.cpp requires. SPIR-V headers are
+# likewise a host-side header dependency. Locate both on the build host. Do not
+# pass /usr/include directly to the Android cross compiler: CMake treats it as
+# an implicit host include path and drops it from the target compile command.
+# Instead, copy only the platform-neutral Vulkan/SPIR-V header trees into a
+# private staging directory used exclusively by ggml-vulkan.
 set(VITAL_VULKAN_HEADERS_ROOT "$ENV{VULKAN_HPP_INCLUDE_DIR}")
 if(NOT VITAL_VULKAN_HEADERS_ROOT)
     find_path(VITAL_VULKAN_HEADERS_ROOT
             NAMES vulkan/vulkan.hpp
+            HINTS
+                "$ENV{VULKAN_SDK}/Include"
+                "$ENV{VULKAN_SDK}/include"
+            PATHS
+                /usr/include
+                /usr/local/include
+            NO_CMAKE_FIND_ROOT_PATH)
+endif()
+
+set(VITAL_SPIRV_HEADERS_ROOT "")
+if(VITAL_VULKAN_HEADERS_ROOT AND
+   EXISTS "${VITAL_VULKAN_HEADERS_ROOT}/spirv/unified1/spirv.hpp")
+    set(VITAL_SPIRV_HEADERS_ROOT "${VITAL_VULKAN_HEADERS_ROOT}")
+else()
+    find_path(VITAL_SPIRV_HEADERS_ROOT
+            NAMES spirv/unified1/spirv.hpp
             HINTS
                 "$ENV{VULKAN_SDK}/Include"
                 "$ENV{VULKAN_SDK}/include"
@@ -46,6 +63,12 @@ if(TARGET ggml-vulkan)
             "GGML_VULKAN requires Vulkan-Hpp (vulkan/vulkan.hpp). "
             "Install the host Vulkan headers or set VULKAN_HPP_INCLUDE_DIR.")
     endif()
+    if(NOT VITAL_SPIRV_HEADERS_ROOT OR
+       NOT EXISTS "${VITAL_SPIRV_HEADERS_ROOT}/spirv/unified1/spirv.hpp")
+        message(FATAL_ERROR
+            "GGML_VULKAN requires SPIR-V headers (spirv/unified1/spirv.hpp). "
+            "Install spirv-headers or provide them through the Vulkan SDK.")
+    endif()
 
     set(VITAL_VULKAN_HEADERS_STAGE "${CMAKE_CURRENT_BINARY_DIR}/vital-vulkan-headers")
     file(MAKE_DIRECTORY "${VITAL_VULKAN_HEADERS_STAGE}")
@@ -55,6 +78,8 @@ if(TARGET ggml-vulkan)
         file(COPY "${VITAL_VULKAN_HEADERS_ROOT}/vk_video"
              DESTINATION "${VITAL_VULKAN_HEADERS_STAGE}")
     endif()
+    file(COPY "${VITAL_SPIRV_HEADERS_ROOT}/spirv"
+         DESTINATION "${VITAL_VULKAN_HEADERS_STAGE}")
 
     target_include_directories(ggml-vulkan BEFORE PRIVATE
             "${VITAL_VULKAN_HEADERS_STAGE}")
