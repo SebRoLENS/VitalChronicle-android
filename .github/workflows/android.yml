@@ -48,8 +48,10 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y glslc spirv-headers
+          sudo apt-get install -y glslc spirv-headers libvulkan-dev
           echo "GLSLC_PATH=$(command -v glslc)" >> "$GITHUB_ENV"
+          test -f /usr/include/vulkan/vulkan.hpp
+          echo "VULKAN_HPP_INCLUDE_DIR=/usr/include" >> "$GITHUB_ENV"
 
       - name: Sync canonical shared core
         run: >-
@@ -164,8 +166,10 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y glslc spirv-headers
+          sudo apt-get install -y glslc spirv-headers libvulkan-dev
           echo "GLSLC_PATH=$(command -v glslc)" >> "$GITHUB_ENV"
+          test -f /usr/include/vulkan/vulkan.hpp
+          echo "VULKAN_HPP_INCLUDE_DIR=/usr/include" >> "$GITHUB_ENV"
 
       - name: Sync canonical shared core
         run: >-
