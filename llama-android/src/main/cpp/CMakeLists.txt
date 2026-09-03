@@ -17,13 +17,15 @@ if(DEFINED ANDROID_ABI)
     endif()
 endif()
 
-# Android NDK ships the Vulkan C API, but not Vulkan-Hpp (vulkan/vulkan.hpp),
-# which current llama.cpp requires. Locate the header on the build host and add
-# it only to the Vulkan backend; the backend still links against Android's NDK
-# Vulkan loader. CI provides VULKAN_HPP_INCLUDE_DIR from libvulkan-dev.
-set(VITAL_VULKAN_HPP_INCLUDE_DIR "$ENV{VULKAN_HPP_INCLUDE_DIR}")
-if(NOT VITAL_VULKAN_HPP_INCLUDE_DIR)
-    find_path(VITAL_VULKAN_HPP_INCLUDE_DIR
+# Android NDK ships the Vulkan C loader/headers but not Vulkan-Hpp
+# (vulkan/vulkan.hpp), which current llama.cpp requires. Locate a complete
+# Vulkan-Headers installation on the build host. Do not pass /usr/include
+# directly to the Android cross compiler: CMake treats it as an implicit host
+# include path and drops it from the target compile command. Instead, copy only
+# the platform-neutral Vulkan header trees into a private staging directory.
+set(VITAL_VULKAN_HEADERS_ROOT "$ENV{VULKAN_HPP_INCLUDE_DIR}")
+if(NOT VITAL_VULKAN_HEADERS_ROOT)
+    find_path(VITAL_VULKAN_HEADERS_ROOT
             NAMES vulkan/vulkan.hpp
             HINTS
                 "$ENV{VULKAN_SDK}/Include"
@@ -38,14 +40,24 @@ set(LLAMA_SRC ${CMAKE_CURRENT_LIST_DIR}/../../../../third_party/llama.cpp)
 add_subdirectory(${LLAMA_SRC} build-llama)
 
 if(TARGET ggml-vulkan)
-    if(NOT VITAL_VULKAN_HPP_INCLUDE_DIR OR
-       NOT EXISTS "${VITAL_VULKAN_HPP_INCLUDE_DIR}/vulkan/vulkan.hpp")
+    if(NOT VITAL_VULKAN_HEADERS_ROOT OR
+       NOT EXISTS "${VITAL_VULKAN_HEADERS_ROOT}/vulkan/vulkan.hpp")
         message(FATAL_ERROR
             "GGML_VULKAN requires Vulkan-Hpp (vulkan/vulkan.hpp). "
             "Install the host Vulkan headers or set VULKAN_HPP_INCLUDE_DIR.")
     endif()
-    target_include_directories(ggml-vulkan SYSTEM PRIVATE
-            "${VITAL_VULKAN_HPP_INCLUDE_DIR}")
+
+    set(VITAL_VULKAN_HEADERS_STAGE "${CMAKE_CURRENT_BINARY_DIR}/vital-vulkan-headers")
+    file(MAKE_DIRECTORY "${VITAL_VULKAN_HEADERS_STAGE}")
+    file(COPY "${VITAL_VULKAN_HEADERS_ROOT}/vulkan"
+         DESTINATION "${VITAL_VULKAN_HEADERS_STAGE}")
+    if(EXISTS "${VITAL_VULKAN_HEADERS_ROOT}/vk_video")
+        file(COPY "${VITAL_VULKAN_HEADERS_ROOT}/vk_video"
+             DESTINATION "${VITAL_VULKAN_HEADERS_STAGE}")
+    endif()
+
+    target_include_directories(ggml-vulkan BEFORE PRIVATE
+            "${VITAL_VULKAN_HEADERS_STAGE}")
 endif()
 
 add_library(${CMAKE_PROJECT_NAME} SHARED vital_ai_chat.cpp)
