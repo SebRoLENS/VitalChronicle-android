@@ -86,7 +86,19 @@ jobs:
       # ephemeral debug key. These APKs are CI test artifacts only and are never
       # published as downloadable releases.
       - name: Build Android debug test APK
-        run: gradle :app:assembleDebug --stacktrace
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle :app:assembleDebug --stacktrace 2>&1 | tee "$RUNNER_TEMP/android-debug-build.log"
+
+      - name: Upload Android build failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-debug-build-failure-log
+          path: ${{ runner.temp }}/android-debug-build.log
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Verify on-device llama.cpp packaging
         shell: bash
