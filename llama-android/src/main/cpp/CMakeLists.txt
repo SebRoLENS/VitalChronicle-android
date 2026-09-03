@@ -17,8 +17,36 @@ if(DEFINED ANDROID_ABI)
     endif()
 endif()
 
+# Android NDK ships the Vulkan C API, but not Vulkan-Hpp (vulkan/vulkan.hpp),
+# which current llama.cpp requires. Locate the header on the build host and add
+# it only to the Vulkan backend; the backend still links against Android's NDK
+# Vulkan loader. CI provides VULKAN_HPP_INCLUDE_DIR from libvulkan-dev.
+set(VITAL_VULKAN_HPP_INCLUDE_DIR "$ENV{VULKAN_HPP_INCLUDE_DIR}")
+if(NOT VITAL_VULKAN_HPP_INCLUDE_DIR)
+    find_path(VITAL_VULKAN_HPP_INCLUDE_DIR
+            NAMES vulkan/vulkan.hpp
+            HINTS
+                "$ENV{VULKAN_SDK}/Include"
+                "$ENV{VULKAN_SDK}/include"
+            PATHS
+                /usr/include
+                /usr/local/include
+            NO_CMAKE_FIND_ROOT_PATH)
+endif()
+
 set(LLAMA_SRC ${CMAKE_CURRENT_LIST_DIR}/../../../../third_party/llama.cpp)
 add_subdirectory(${LLAMA_SRC} build-llama)
+
+if(TARGET ggml-vulkan)
+    if(NOT VITAL_VULKAN_HPP_INCLUDE_DIR OR
+       NOT EXISTS "${VITAL_VULKAN_HPP_INCLUDE_DIR}/vulkan/vulkan.hpp")
+        message(FATAL_ERROR
+            "GGML_VULKAN requires Vulkan-Hpp (vulkan/vulkan.hpp). "
+            "Install the host Vulkan headers or set VULKAN_HPP_INCLUDE_DIR.")
+    endif()
+    target_include_directories(ggml-vulkan SYSTEM PRIVATE
+            "${VITAL_VULKAN_HPP_INCLUDE_DIR}")
+endif()
 
 add_library(${CMAKE_PROJECT_NAME} SHARED vital_ai_chat.cpp)
 
