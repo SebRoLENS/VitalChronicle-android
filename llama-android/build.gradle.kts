@@ -33,6 +33,12 @@ android {
                     "-DGGML_BACKEND_DL=ON",
                     "-DGGML_CPU_ALL_VARIANTS=ON",
                     "-DGGML_LLAMAFILE=OFF",
+                    // Current ggml-vulkan uses Vulkan 1.1 entry points such as
+                    // vkGetPhysicalDeviceFeatures2. The NDK API-26 Vulkan stub
+                    // does not export them; llama.cpp's Android Vulkan setup
+                    // therefore links native code against API 28. The APK still
+                    // keeps minSdk 26 and older devices retain the CPU fallback.
+                    "-DANDROID_PLATFORM=android-28",
                     // Vendor-neutral Android GPU fallback. ggml builds this as a
                     // dynamically discoverable backend beside the CPU variants.
                     "-DGGML_VULKAN=ON",
