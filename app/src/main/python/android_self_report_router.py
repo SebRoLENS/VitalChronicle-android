@@ -1,35 +1,34 @@
 """Fast local routing for explicit subjective self-reports on Android.
 
-This path deliberately does not invoke a generative model. Short statements about
-how the user feels are dated personal context, not health-analysis questions.
+Short statements about how the user feels are dated personal context, not
+health-analysis questions, so this path deliberately avoids generative AI.
 """
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
 
 from google_health_viewer.agent_store import AgentStore
 
 
-# Check negated/absent states before positive phrases so "I'm not tired" is not
-# accidentally interpreted as fatigue being present.
+# Check absence/negation before positive phrases: "I'm not tired" must never be
+# interpreted as fatigue being present.
 _ABSENT_PATTERNS: dict[str, tuple[str, ...]] = {
     "fatigue": (
         "i'm not tired", "i am not tired", "not tired", "i don't feel tired", "i do not feel tired",
         "non sono stanco", "non sono stanca", "non mi sento stanco", "non mi sento stanca",
-        "non sono affaticato", "non sono affaticata", "non mi sento affaticato", "non mi sento affaticata",
-        "nicht müde", "no estoy cansado", "no estoy cansada", "pas fatigué", "pas fatiguée",
+        "non sono affaticato", "non sono affaticata", "nicht müde", "no estoy cansado", "no estoy cansada",
+        "pas fatigué", "pas fatiguée",
     ),
     "sleepiness": (
         "i'm not sleepy", "i am not sleepy", "not sleepy", "i don't feel sleepy", "i do not feel sleepy",
-        "non ho sonno", "non sono assonnato", "non sono assonnata", "non mi sento assonnato", "non mi sento assonnata",
-        "nicht schläfrig", "no tengo sueño", "pas somnolent", "pas somnolente",
+        "non ho sonno", "non sono assonnato", "non sono assonnata", "nicht schläfrig", "no tengo sueño",
+        "pas somnolent", "pas somnolente",
     ),
     "soreness": (
         "i'm not sore", "i am not sore", "not sore", "no muscle soreness", "i don't feel sore", "i do not feel sore",
-        "non sono indolenzito", "non sono indolenzita", "non mi sento indolenzito", "non mi sento indolenzita",
-        "nessun dolore muscolare", "keinen muskelkater", "sin dolor muscular", "pas de courbatures",
+        "non sono indolenzito", "non sono indolenzita", "nessun dolore muscolare", "keinen muskelkater",
+        "sin dolor muscular", "pas de courbatures",
     ),
     "stress": (
         "i'm not stressed", "i am not stressed", "not stressed", "i don't feel stressed", "i do not feel stressed",
@@ -49,18 +48,16 @@ _PRESENT_PATTERNS: dict[str, tuple[str, ...]] = {
         "schläfrig", "tengo sueño", "somnolent", "somnolente",
     ),
     "soreness": (
-        "sono indolenzito", "sono indolenzita", "mi sento indolenzito", "mi sento indolenzita", "dolori muscolari",
-        "muscoli indolenziti", "i feel sore", "i'm sore", "i am sore", "muscle soreness", "muskelkater",
-        "dolor muscular", "courbatures",
+        "sono indolenzito", "sono indolenzita", "dolori muscolari", "muscoli indolenziti", "i feel sore", "i'm sore",
+        "i am sore", "muscle soreness", "muskelkater", "dolor muscular", "courbatures",
     ),
     "stress": (
         "mi sento stressato", "mi sento stressata", "sono stressato", "sono stressata", "i feel stressed", "i'm stressed",
         "i am stressed", "gestresst", "estresado", "estresada", "stressé", "stressée",
     ),
     "energy": (
-        "mi sento energico", "mi sento energica", "pieno di energia", "piena di energia", "i feel energetic",
-        "i'm energetic", "i am energetic", "full of energy", "voller energie", "con mucha energía", "plein d'énergie",
-        "pleine d'énergie",
+        "mi sento energico", "mi sento energica", "pieno di energia", "piena di energia", "i feel energetic", "i'm energetic",
+        "i am energetic", "full of energy", "voller energie", "con mucha energía", "plein d'énergie", "pleine d'énergie",
     ),
 }
 
@@ -83,6 +80,16 @@ _QUERY_MARKERS = (
     "perché", "perche", "come ", "quanto", "quanta", "quanti", "quante", "cosa ", "dimmi", "analizza", "spieg",
     "warum ", "wie ", "qué ", "por qué", "como ", "cómo ", "pourquoi ", "comment ",
 )
+
+_STRONG_LANGUAGE_MARKERS = {
+    "it": (
+        "sto alla grande", "sto benissimo", "sto bene", "mi sento", "sono stanco", "sono stanca",
+        "non sono", "non ho sonno", "ho sonno", "senza energie",
+    ),
+    "de": ("ich bin", "ich fühle", "mir geht", "nicht müde", "keine energie"),
+    "es": ("estoy ", "me siento", "tengo sueño", "no tengo sueño", "sin energía"),
+    "fr": ("je suis", "je me sens", "je vais", "pas fatigu", "sans énergie"),
+}
 
 
 def _normalise(text: str) -> str:
@@ -115,12 +122,16 @@ def _is_standalone_statement(text: str) -> bool:
 
 
 def _language(text: str) -> str:
-    folded = f" {_normalise(text)} "
+    folded = _normalise(text)
+    for language, markers in _STRONG_LANGUAGE_MARKERS.items():
+        if any(marker in folded for marker in markers):
+            return language
+    padded = f" {folded} "
     scores = {
-        "it": sum(m in folded for m in (" mi ", " sono ", " sto ", " ho ", " oggi ", " non ", " bene ", " stanco")),
-        "de": sum(m in folded for m in (" ich ", " bin ", " heute ", " nicht ", " müde", " gut ")),
-        "es": sum(m in folded for m in (" estoy ", " tengo ", " hoy ", " no ", " cansad", " bien ")),
-        "fr": sum(m in folded for m in (" je ", " suis ", " aujourd", " pas ", " fatigu", " bien ")),
+        "it": sum(m in padded for m in (" mi ", " sono ", " sto ", " ho ", " oggi ", " non ", " bene ", " stanco")),
+        "de": sum(m in padded for m in (" ich ", " bin ", " heute ", " nicht ", " müde", " gut ")),
+        "es": sum(m in padded for m in (" estoy ", " tengo ", " hoy ", " no ", " cansad", " bien ")),
+        "fr": sum(m in padded for m in (" je ", " suis ", " aujourd", " pas ", " fatigu", " bien ")),
     }
     best = max(scores, key=scores.get)
     return best if scores[best] >= 2 else "en"
@@ -151,14 +162,20 @@ def _follow_up(category: str, state: str, language: str) -> tuple[str, str]:
         return question, "Una risposta breve migliora la personalizzazione futura senza trasformare questo stato momentaneo in un tratto permanente."
 
     if language == "de":
-        question = "Ist dieses Befinden heute für dich typisch oder deutlich besser bzw. schlechter als sonst?"
-        return question, "Eine kurze Antwort verbessert die Personalisierung, ohne einen momentanen Zustand als dauerhaftes Merkmal zu behandeln."
+        return (
+            "Ist dieses Befinden heute für dich typisch oder deutlich besser bzw. schlechter als sonst?",
+            "Eine kurze Antwort verbessert die Personalisierung, ohne einen momentanen Zustand als dauerhaftes Merkmal zu behandeln.",
+        )
     if language == "es":
-        question = "¿Este estado de hoy es habitual para ti o te sientes claramente mejor o peor de lo normal?"
-        return question, "Una respuesta breve mejora la personalización sin convertir un estado momentáneo en un rasgo permanente."
+        return (
+            "¿Este estado de hoy es habitual para ti o te sientes claramente mejor o peor de lo normal?",
+            "Una respuesta breve mejora la personalización sin convertir un estado momentáneo en un rasgo permanente.",
+        )
     if language == "fr":
-        question = "Cet état aujourd'hui est-il habituel pour toi, ou te sens-tu nettement mieux ou moins bien que d'habitude ?"
-        return question, "Une réponse courte améliore la personnalisation sans transformer un état momentané en trait permanent."
+        return (
+            "Cet état aujourd'hui est-il habituel pour toi, ou te sens-tu nettement mieux ou moins bien que d'habitude ?",
+            "Une réponse courte améliore la personnalisation sans transformer un état momentané en trait permanent.",
+        )
 
     if state == "absent" and category == "fatigue":
         question = "Is not feeling tired today typical for you at this time, or do you feel better than usual?"
@@ -203,6 +220,16 @@ def _acknowledgement(category: str, state: str, language: str, follow_up_queued:
             answer += " Se vuoi, puoi rispondere alla breve domanda di approfondimento qui sotto."
         return answer
 
+    if language == "de":
+        answer = "Verstanden — ich habe dein aktuelles Befinden lokal als datierte subjektive Beobachtung gespeichert, nicht als dauerhaftes Merkmal."
+        return answer + (" Du kannst die kurze Rückfrage unten beantworten, wenn du die Personalisierung verfeinern möchtest." if follow_up_queued else "")
+    if language == "es":
+        answer = "Entendido: he guardado localmente cómo te sientes ahora como una observación subjetiva fechada, no como un rasgo permanente."
+        return answer + (" Si quieres, puedes responder a la breve pregunta de seguimiento de abajo." if follow_up_queued else "")
+    if language == "fr":
+        answer = "Compris — j'ai enregistré localement ton état actuel comme une observation subjective datée, pas comme un trait permanent."
+        return answer + (" Tu peux répondre à la courte question ci-dessous si tu veux affiner la personnalisation." if follow_up_queued else "")
+
     descriptions = {
         ("fatigue", "absent"): "that you're not feeling tired right now",
         ("sleepiness", "absent"): "that you're not feeling sleepy right now",
@@ -225,9 +252,8 @@ def _acknowledgement(category: str, state: str, language: str, follow_up_queued:
 def route(agent_path: str, text: str) -> str:
     """Capture a subjective statement and optionally short-circuit generation.
 
-    Returns handled=true only for a standalone self-report. If a report is embedded
-    in a real question, it is still captured but the normal health-agent analysis
-    continues.
+    handled=true is returned only for a standalone self-report. When a report is
+    embedded in a real question, it is captured but normal health analysis continues.
     """
     statement = text.strip()
     detected = _detect(statement)
