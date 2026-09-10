@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +17,7 @@ MAX_RAW_SERIES_PROBES_BEFORE_FACTORY = 2
 MAX_TOOL_RESULT_CHARS = 16000
 CALIBRATION_VERSION = 2
 THREAD_ID = "android-local"
+CONVERSATION_LIMIT = 12
 
 _COMPREHENSIVE_MARKERS = (
     "analisi totale", "analisi completa", "analisi profonda", "tutta la cronologia",
@@ -39,11 +40,14 @@ _REPORT_TOPICS = {
     "stress": {"recovery"}, "energy": {"recovery", "training"},
 }
 _SELF_REPORT_PATTERNS = {
-    "fatigue": ("mi sento stanco", "mi sento stanca", "sono stanco", "sono stanca", "mi sento affaticato", "mi sento affaticata", "i feel tired", "i'm tired", "i am tired", "i feel fatigued"),
-    "sleepiness": ("ho sonno", "mi sento assonnato", "mi sento assonnata", "i feel sleepy", "i'm sleepy"),
-    "soreness": ("sono indolenzito", "sono indolenzita", "dolori muscolari", "muscoli indolenziti", "i feel sore", "muscle soreness"),
-    "stress": ("mi sento stressato", "mi sento stressata", "sono stressato", "sono stressata", "i feel stressed", "i'm stressed"),
-    "energy": ("mi sento energico", "mi sento energica", "pieno di energia", "piena di energia", "i feel energetic", "full of energy"),
+    "fatigue": (
+        "mi sento stanco", "mi sento stanca", "sono stanco", "sono stanca", "mi sento affaticato", "mi sento affaticata",
+        "i feel tired", "i'm tired", "i am tired", "i feel fatigued", "ich bin müde", "estoy cansado", "estoy cansada", "je suis fatigué", "je suis fatiguée",
+    ),
+    "sleepiness": ("ho sonno", "mi sento assonnato", "mi sento assonnata", "i feel sleepy", "i'm sleepy", "schläfrig", "tengo sueño", "somnolent"),
+    "soreness": ("sono indolenzito", "sono indolenzita", "dolori muscolari", "muscoli indolenziti", "i feel sore", "muscle soreness", "muskelkater", "dolor muscular", "courbatures"),
+    "stress": ("mi sento stressato", "mi sento stressata", "sono stressato", "sono stressata", "i feel stressed", "i'm stressed", "gestresst", "estresado", "estresada", "stressé", "stressée"),
+    "energy": ("mi sento energico", "mi sento energica", "pieno di energia", "piena di energia", "i feel energetic", "full of energy", "voller energie", "con mucha energía", "plein d'énergie", "pleine d'énergie"),
 }
 
 AGENT_SYSTEM_PROMPT = """You are VitalChronicle's fully local personal health agent.
@@ -51,7 +55,7 @@ Use only the safe deterministic tools listed in the user prompt. Never calculate
 
 Tool Factory policy: first reuse an exact built-in or learned capability. Search the registry before creating a learned tool. Detect reusable capability gaps yourself: personal-baseline thresholds, event-conditioned/lagged relationships, multi-step deterministic transforms and recovery-latency questions are strong signals. Learned tools are declarative only; never request Python, shell, filesystem, browser, network or health-database write access. If tool creation returns invalid_pipeline or invalid_spec, repair the same tool from the returned DSL reference instead of substituting a proxy.
 
-Personalisation policy: current non-expired personal context and dated self-reports may refine interpretation, but subjective feedback never proves medical safety or causation. Keep measured observations, calculated relationships and user-reported context conceptually distinct. Do not diagnose disease, change treatment or present wearable estimates as medical clearance.
+Personalisation policy: current non-expired personal context and dated self-reports may refine interpretation, but subjective feedback never proves medical safety or causation. Keep measured observations, calculated relationships and user-reported context conceptually distinct. Recent conversation history is short-term dialogue context only: use it to resolve follow-up references, but never turn it into a stable personal trait unless explicit feedback is stored through the personalisation system. Do not diagnose disease, change treatment or present wearable estimates as medical clearance.
 
 Response policy: answer the user's actual question first. Be concise. Do NOT add an Evidence, Reliability, Methods, Sources, tool-log or data-inventory section by default. Do not narrate which tools you called. Mention only the one or two measurements/coverage limitations that materially change the conclusion. Give more methodological detail only when the user asks for it. Never expose scratchpad reasoning or step-by-step arithmetic.
 
@@ -72,8 +76,85 @@ class AndroidAgentHealthStore(SQLiteStore):
         return {str(row["data_type"]): int(row["n"]) for row in rows}
 
 
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _ensure_android_tables(path: str) -> None:
+    db = sqlite3.connect(path, timeout=30.0)
+    try:
+        db.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS android_agent_messages(
+                message_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_android_agent_messages
+                ON android_agent_messages(message_id);
+            """
+        )
+        db.commit()
+    finally:
+        db.close()
+
+
 def _agent_store(path: str) -> AgentStore:
-    return AgentStore(Path(path))
+    store = AgentStore(Path(path))
+    _ensure_android_tables(path)
+    return store
+
+
+def _conversation_history(agent_path: str, limit: int = CONVERSATION_LIMIT) -> list[dict[str, str]]:
+    _ensure_android_tables(agent_path)
+    db = sqlite3.connect(agent_path, timeout=10.0)
+    db.row_factory = sqlite3.Row
+    try:
+        rows = db.execute(
+            "SELECT role,content FROM android_agent_messages ORDER BY message_id DESC LIMIT ?",
+            (max(1, min(40, int(limit))),),
+        ).fetchall()
+    finally:
+        db.close()
+    return [
+        {"role": str(row["role"]), "content": str(row["content"])[:5000]}
+        for row in reversed(rows)
+        if str(row["role"]) in {"user", "assistant"}
+    ]
+
+
+def record_exchange(agent_path: str, question: str, answer: str) -> str:
+    _ensure_android_tables(agent_path)
+    question = question.strip()
+    answer = answer.strip()
+    if not question or not answer:
+        return json.dumps({"stored": False})
+    db = sqlite3.connect(agent_path, timeout=30.0)
+    try:
+        now = _now()
+        db.execute("INSERT INTO android_agent_messages(role,content,created_at) VALUES('user',?,?)", (question[:12000], now))
+        db.execute("INSERT INTO android_agent_messages(role,content,created_at) VALUES('assistant',?,?)", (answer[:16000], now))
+        db.execute(
+            "DELETE FROM android_agent_messages WHERE message_id NOT IN "
+            "(SELECT message_id FROM android_agent_messages ORDER BY message_id DESC LIMIT 40)"
+        )
+        db.commit()
+    finally:
+        db.close()
+    return json.dumps({"stored": True})
+
+
+def clear_conversation(agent_path: str) -> str:
+    _ensure_android_tables(agent_path)
+    db = sqlite3.connect(agent_path, timeout=30.0)
+    try:
+        cursor = db.execute("DELETE FROM android_agent_messages")
+        db.commit()
+        count = int(cursor.rowcount or 0)
+    finally:
+        db.close()
+    return json.dumps({"cleared": count})
 
 
 def _archive_bounds(database_path: str) -> dict[str, Any] | None:
@@ -167,29 +248,38 @@ def _detect_self_report(question: str) -> dict[str, str] | None:
     return None
 
 
-def _is_italian(text: str) -> bool:
+def _language(text: str) -> str:
     folded = f" {text.casefold()} "
-    return any(marker in folded for marker in (" mi ", " sono ", " ho ", " oggi ", " sonno ", " allen", " recuper"))
+    scores = {
+        "it": sum(marker in folded for marker in (" mi ", " sono ", " ho ", " oggi ", " sonno ", " allen", " recuper", " il ", " la ", " che ")),
+        "de": sum(marker in folded for marker in (" ich ", " mein", " heute ", " schlaf", " müde", " und ", " der ", " die ")),
+        "es": sum(marker in folded for marker in (" estoy ", " tengo ", " hoy ", " sueño", " entrenamiento", " recuperación", " el ", " la ", " que ")),
+        "fr": sum(marker in folded for marker in (" je ", " suis ", " aujourd", " sommeil", " entraînement", " récupération", " le ", " la ", " que ")),
+    }
+    best = max(scores, key=scores.get)
+    return best if scores[best] >= 2 else "en"
 
 
-def _self_report_follow_up(category: str, italian: bool) -> tuple[str, str]:
-    if italian:
-        questions = {
+def _self_report_follow_up(category: str, language: str) -> tuple[str, str]:
+    copies = {
+        "it": {
             "fatigue": "La stanchezza di oggi è soprattutto muscolare, sonnolenza o mancanza generale di energia?",
             "sleepiness": "Diresti che la sonnolenza è lieve, moderata o forte, ed è insolita a quest'ora?",
             "soreness": "L'indolenzimento riguarda soprattutto muscoli allenati di recente ed è lieve, moderato o forte?",
             "stress": "Lo stress di oggi ti sembra soprattutto mentale, fisico o misto?",
             "energy": "Questa energia è insolita per te oggi, ed è lieve, moderata o forte?",
-        }
-        return questions.get(category, "Questa sensazione è insolita per te oggi, ed è lieve, moderata o forte?"), "Una risposta breve migliora la personalizzazione futura."
-    questions = {
-        "fatigue": "Is today's tiredness mainly muscular fatigue, sleepiness, or a general lack of energy?",
-        "sleepiness": "Is the sleepiness mild, moderate, or strong, and unusual for this time of day?",
-        "soreness": "Is the soreness mainly in muscles trained recently, and is it mild, moderate, or strong?",
-        "stress": "Does today's stress feel mainly mental, physical, or mixed?",
-        "energy": "Is this energy unusual for you today, and is it mild, moderate, or strong?",
+        },
+        "en": {
+            "fatigue": "Is today's tiredness mainly muscular fatigue, sleepiness, or a general lack of energy?",
+            "sleepiness": "Is the sleepiness mild, moderate, or strong, and unusual for this time of day?",
+            "soreness": "Is the soreness mainly in muscles trained recently, and is it mild, moderate, or strong?",
+            "stress": "Does today's stress feel mainly mental, physical, or mixed?",
+            "energy": "Is this energy unusual for you today, and is it mild, moderate, or strong?",
+        },
     }
-    return questions.get(category, "Is this feeling unusual for you today, and is it mild, moderate, or strong?"), "One short answer can improve future personalisation."
+    table = copies.get(language, copies["en"])
+    reason = "Una risposta breve migliora la personalizzazione futura." if language == "it" else "One short answer can improve future personalisation."
+    return table.get(category, table.get("energy", "Can you add one short detail about how you feel today?")), reason
 
 
 def _bounded(value: Any) -> Any:
@@ -218,12 +308,11 @@ def bootstrap(database_path: str, agent_path: str, question: str) -> str:
             )
             key = f"self_report_detail:{self_report['category']}"
             if captured and not store.has_recent_feedback_key(key, days=14):
-                follow_up, reason = _self_report_follow_up(self_report["category"], _is_italian(question))
+                follow_up, reason = _self_report_follow_up(self_report["category"], _language(question))
                 store.ask_feedback(
                     follow_up, thread_id=THREAD_ID, reason=reason, learning_key=key,
                     context={"self_report_id": captured.get("report_id"), "category": self_report["category"], "feedback_mode": "self_report_detail"},
                 )
-            # Include the just-recorded report in this same turn.
             personal, reports = _relevant_personal_evidence(question, store)
 
         hint = _factory_hint(question)
@@ -238,6 +327,7 @@ def bootstrap(database_path: str, agent_path: str, question: str) -> str:
         context = {
             "archive_bounds": _archive_bounds(database_path),
             "record_counts": health.counts(),
+            "recent_conversation": _conversation_history(agent_path),
             "relevant_personal_context": personal,
             "relevant_self_reports": reports,
             "tool_factory_hint": hint,
@@ -263,6 +353,7 @@ def bootstrap(database_path: str, agent_path: str, question: str) -> str:
                 "factory_capability": hint["capability"],
                 "tool_count": len(schemas),
                 "tool_names": names,
+                "history_count": len(context["recent_conversation"]),
             },
             ensure_ascii=False, separators=(",", ":"),
         )
@@ -287,21 +378,49 @@ def execute_tool(database_path: str, agent_path: str, name: str, arguments_json:
         health.close()
 
 
+def _pending_calibration_count(agent_path: str) -> int:
+    db = sqlite3.connect(agent_path, timeout=10.0)
+    try:
+        row = db.execute(
+            "SELECT COUNT(*) FROM feedback WHERE answered_at IS NULL AND context_json LIKE '%\"calibration\":true%'"
+        ).fetchone()
+    finally:
+        db.close()
+    return int(row[0] or 0) if row else 0
+
+
+def _maybe_complete_calibration(store: AgentStore, agent_path: str) -> None:
+    pending_version = int(store.get_meta("calibration_pending_version", "0") or 0)
+    if pending_version and _pending_calibration_count(agent_path) == 0:
+        store.mark_calibrated(pending_version)
+        store.set_meta("calibration_pending_version", "0")
+
+
 def state(database_path: str, agent_path: str) -> str:
     health = AndroidAgentHealthStore(database_path)
     store = _agent_store(agent_path)
     try:
         EnhancedSafeToolExecutor(health, store)
+        _maybe_complete_calibration(store, agent_path)
         tools = store.list_tools(include_superseded=True)
+        model = store.user_model(include_expired=True)
+        reports = store.recent_self_reports(days=90, limit=100)
+        events = store.recent_tool_events(limit=80)
         return json.dumps(
             {
                 "built_in_tools": sum(1 for item in tools if item.get("kind") == "builtin"),
                 "learned_tools": sum(1 for item in tools if item.get("kind") == "learned" and item.get("status") == "active"),
                 "superseded_tools": sum(1 for item in tools if item.get("status") == "superseded"),
-                "associations": len(store.user_model()),
+                "associations": len([item for item in model if item.get("is_current", True)]),
                 "calibration_version": store.calibration_version(),
+                "calibration_pending": _pending_calibration_count(agent_path) > 0,
+                "calibration_remaining": _pending_calibration_count(agent_path),
                 "pending_feedback": store.pending_feedback(THREAD_ID),
-                "recent_tool_events": store.recent_tool_events(limit=20),
+                "tools": tools,
+                "user_model": model,
+                "self_reports": reports,
+                "recent_tool_events": events,
+                "recent_conversation": _conversation_history(agent_path),
             },
             ensure_ascii=False, separators=(",", ":"), default=str,
         )
@@ -315,6 +434,7 @@ def answer_feedback(database_path: str, agent_path: str, feedback_id: str, answe
     try:
         EnhancedSafeToolExecutor(health, store)
         item = store.answer_feedback(feedback_id, answer)
+        _maybe_complete_calibration(store, agent_path)
         return json.dumps(item or {}, ensure_ascii=False, separators=(",", ":"), default=str)
     finally:
         health.close()
@@ -325,32 +445,144 @@ def dismiss_feedback(database_path: str, agent_path: str, feedback_id: str) -> s
     store = _agent_store(agent_path)
     try:
         EnhancedSafeToolExecutor(health, store)
-        return json.dumps({"dismissed": store.dismiss_feedback(feedback_id)})
+        dismissed = store.dismiss_feedback(feedback_id)
+        _maybe_complete_calibration(store, agent_path)
+        return json.dumps({"dismissed": dismissed})
     finally:
         health.close()
 
 
-def calibrate(database_path: str, agent_path: str) -> str:
+def _calibration_snapshot(executor: EnhancedSafeToolExecutor, bounds: dict[str, str]) -> dict[str, Any]:
+    right = date.fromisoformat(bounds["end"])
+    return {
+        "available": True,
+        "period": bounds,
+        "readiness": executor.execute("calculate_readiness", {"end": right.isoformat()}),
+        "cardio_load": executor.execute("calculate_cardio_load", {"start": (right - timedelta(days=34)).isoformat(), "end": right.isoformat()}),
+        "training_status": executor.execute("calculate_training_status", {"end": right.isoformat()}),
+        "resilience": executor.execute("calculate_resilience", {"end": right.isoformat()}),
+        "sleep_regularity": executor.execute("calculate_sleep_regularity", {"start": (right - timedelta(days=41)).isoformat(), "end": right.isoformat()}),
+        "sleep_debt": executor.execute("calculate_sleep_debt", {"end": right.isoformat()}),
+        "workouts": executor.execute("analyze_workout", {"start": (right - timedelta(days=55)).isoformat(), "end": right.isoformat()}),
+    }
+
+
+def _calibration_questions(snapshot: dict[str, Any], language: str) -> list[dict[str, Any]]:
+    it = language == "it"
+    questions: list[dict[str, Any]] = []
+    training = snapshot.get("training_status") or {}
+    load = training.get("load") or {}
+    ratio = load.get("acute_chronic_ratio")
+    if isinstance(ratio, (int, float)) and ratio >= 1.25:
+        questions.append({
+            "question": "Il tuo carico cardiovascolare/di allenamento recente è molto più alto del tuo riferimento personale di lungo periodo. Come ti senti di solito dopo settimane come questa?" if it else "Your recent cardiovascular/training load is much higher than your longer personal baseline. How do you usually feel after weeks like this?",
+            "reason": "La risposta aiuta a distinguere un carico che tolleri abitualmente da uno associato a stanchezza soggettiva." if it else "Your answer helps distinguish a load you commonly tolerate from one accompanied by subjective fatigue.",
+            "learning_key": "high_load_subjective_tolerance",
+            "context": {"calibration": True, "observation": f"acute:chronic load ratio was about {float(ratio):.2f}", "ratio": ratio},
+        })
+    sleep = snapshot.get("sleep_debt") or {}
+    baseline_sleep = sleep.get("baseline_sleep_hours")
+    if isinstance(baseline_sleep, (int, float)):
+        questions.append({
+            "question": (f"VitalChronicle stima che la tua durata abituale del sonno sia di circa {float(baseline_sleep):.1f} ore. In genere ti senti ben riposato con questa quantità?" if it else f"VitalChronicle estimates that your usual sleep duration is around {float(baseline_sleep):.1f} hours. Do you generally feel well rested with that amount?"),
+            "reason": "Questo aggiunge il tuo riscontro soggettivo al riferimento misurato del sonno." if it else "This adds subjective context to the measured sleep-duration baseline.",
+            "learning_key": "subjective_sleep_need_context",
+            "context": {"calibration": True, "observation": f"personal median sleep was about {float(baseline_sleep):.2f} h"},
+        })
+    workouts = snapshot.get("workouts") or {}
+    sessions = int(workouts.get("sessions") or 0)
+    if sessions >= 4:
+        questions.append({
+            "question": "Il tuo livello di attività attuale è intenzionale? Qual è il tuo principale obiettivo di allenamento in questo periodo?" if it else "Is your current activity level intentional, and what is your main training goal right now?",
+            "reason": "Sapere se il carico recente fa parte di un piano intenzionale rende più pertinenti i consigli futuri." if it else "Knowing whether the recent workload reflects an intentional plan improves future coaching.",
+            "learning_key": "current_training_goal",
+            "context": {"calibration": True, "observation": f"{sessions} workouts were observed in the calibration window"},
+        })
+    regularity = snapshot.get("sleep_regularity") or {}
+    score = regularity.get("regularity_score")
+    if isinstance(score, (int, float)) and score < 60:
+        questions.append({
+            "question": "Gli orari del tuo sonno variano sensibilmente tra le notti registrate. Dipende soprattutto da lavoro o vita sociale, dall'allenamento, oppure accade senza un motivo chiaro?" if it else "Your sleep timing varies noticeably across recorded nights. Is that mainly due to work/social schedules, training, or no clear reason?",
+            "reason": "Questo evita che l'agente attribuisca all'allenamento un ritmo irregolare quando esiste un'altra spiegazione." if it else "This can prevent the agent from attributing an irregular schedule to training when another context explains it.",
+            "learning_key": "sleep_schedule_context",
+            "context": {"calibration": True, "observation": f"sleep regularity score was {float(score):.1f}/100"},
+        })
+    if not questions:
+        questions.append({
+            "question": "Qual è la cosa più importante che vuoi che VitalChronicle ti aiuti a capire: recupero, sonno, allenamento, benessere generale o altro?" if it else "What is the most important thing you want VitalChronicle to help you understand: recovery, sleep, training, general wellbeing, or something else?",
+            "reason": "Una domanda sull'obiettivo è più utile di un questionario standard quando i dati non indicano una specifica incertezza." if it else "A goal question is more useful than a standard questionnaire when measured data do not expose a specific uncertainty.",
+            "learning_key": "primary_health_coaching_goal",
+            "context": {"calibration": True, "observation": "initial personalisation calibration"},
+        })
+    return questions[:6]
+
+
+def calibrate(database_path: str, agent_path: str, language_hint: str = "") -> str:
     bounds = _archive_bounds(database_path)
     if not bounds:
         return json.dumps({"available": False, "reason": "no_health_data"})
-    right = date.fromisoformat(bounds["end"])
     health = AndroidAgentHealthStore(database_path)
     store = _agent_store(agent_path)
     try:
         executor = EnhancedSafeToolExecutor(health, store)
-        snapshot: dict[str, Any] = {
-            "available": True,
-            "period": bounds,
-            "readiness": executor.execute("calculate_readiness", {"end": right.isoformat()}),
-            "training_status": executor.execute("calculate_training_status", {"end": right.isoformat()}),
-            "resilience": executor.execute("calculate_resilience", {"end": right.isoformat()}),
-            "sleep_regularity": executor.execute("calculate_sleep_regularity", {"start": (right - timedelta(days=41)).isoformat(), "end": right.isoformat()}),
-            "sleep_debt": executor.execute("calculate_sleep_debt", {"end": right.isoformat()}),
-            "workouts": executor.execute("analyze_workout", {"start": (right - timedelta(days=55)).isoformat(), "end": right.isoformat()}),
-        }
-        store.mark_calibrated(CALIBRATION_VERSION)
-        return json.dumps(_bounded(snapshot), ensure_ascii=False, separators=(",", ":"), default=str)
+        snapshot = _calibration_snapshot(executor, bounds)
+        language = _language(language_hint) if language_hint else "en"
+        questions = _calibration_questions(snapshot, language)
+
+        # Supersede only unfinished questions from an older calibration run.
+        db = sqlite3.connect(agent_path, timeout=30.0)
+        try:
+            db.execute(
+                "UPDATE feedback SET answer='[superseded calibration]',answered_at=? "
+                "WHERE answered_at IS NULL AND context_json LIKE '%\"calibration\":true%'",
+                (_now(),),
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        store.set_meta("calibration_pending_version", str(CALIBRATION_VERSION))
+        # Insert in reverse because pending_feedback returns newest first.
+        for item in reversed(questions):
+            store.ask_feedback(
+                item["question"],
+                thread_id=THREAD_ID,
+                reason=item["reason"],
+                learning_key=item["learning_key"],
+                context=item["context"],
+            )
+        if not questions:
+            store.mark_calibrated(CALIBRATION_VERSION)
+            store.set_meta("calibration_pending_version", "0")
+        return json.dumps(
+            _bounded({
+                **snapshot,
+                "questions": questions,
+                "question_count": len(questions),
+                "pending": bool(questions),
+            }),
+            ensure_ascii=False, separators=(",", ":"), default=str,
+        )
+    finally:
+        health.close()
+
+
+def delete_learned_tool(database_path: str, agent_path: str, name: str) -> str:
+    health = AndroidAgentHealthStore(database_path)
+    store = _agent_store(agent_path)
+    try:
+        EnhancedSafeToolExecutor(health, store)
+        return json.dumps({"deleted": store.delete_learned_tool(name)})
+    finally:
+        health.close()
+
+
+def forget_user_model(database_path: str, agent_path: str, key: str) -> str:
+    health = AndroidAgentHealthStore(database_path)
+    store = _agent_store(agent_path)
+    try:
+        EnhancedSafeToolExecutor(health, store)
+        return json.dumps({"forgotten": store.forget_user_model(key)})
     finally:
         health.close()
 
@@ -359,6 +591,7 @@ def reset_personalisation(database_path: str, agent_path: str) -> str:
     health = AndroidAgentHealthStore(database_path)
     store = _agent_store(agent_path)
     try:
+        # Keep short-term chat history, matching desktop's separation between conversations and personalisation state.
         store.clear()
         EnhancedSafeToolExecutor(health, store)
         return state(database_path, agent_path)

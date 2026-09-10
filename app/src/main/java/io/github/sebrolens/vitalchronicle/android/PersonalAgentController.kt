@@ -82,7 +82,7 @@ class PersonalAgentController(
             null
         }
 
-        return when (aiEngine) {
+        val result = when (aiEngine) {
             AiEngine.DETERMINISTIC -> null
             AiEngine.OLLAMA_LOCAL -> ollamaRun()
             AiEngine.GEMINI_NANO -> nanoRun()
@@ -92,6 +92,10 @@ class PersonalAgentController(
                 nanoRun() ?: ollamaRun()
             }
         }
+        if (result != null) {
+            runCatching { core.recordPersonalAgentExchange(agentDatabasePath, question, result.answer) }
+        }
+        return result
     }
 
     private suspend fun runAgentLoop(
@@ -282,8 +286,8 @@ class PersonalAgentController(
     }
 
     companion object {
-        private const val ACTION_OUTPUT_TOKENS = 1536
-        private const val FINAL_OUTPUT_TOKENS = 2048
+        private const val ACTION_OUTPUT_TOKENS = 2048
+        private const val FINAL_OUTPUT_TOKENS = 3200
         private const val MAX_TRANSCRIPT_CHARS = 42_000
         private const val INITIAL_CONTEXT_CHARS = 16_000
         private const val RECENT_CONTEXT_CHARS = 24_000
