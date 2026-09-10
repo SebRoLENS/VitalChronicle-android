@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 
 import android_agent_bridge as agent
+import android_self_report_router as self_report_router
 
 
 def main() -> None:
@@ -29,6 +30,30 @@ def main() -> None:
             ("steps", "one", "data_point", "2026-09-08T08:00:00+00:00", None, "test", '{"count":5000}', "2026-09-08T09:00:00+00:00"),
         )
         db.commit(); db.close()
+
+        # Short subjective statements are memory updates, not analysis requests.
+        # In particular, negation must be preserved: "not tired" is not fatigue.
+        router_state = root / "self_report_router.sqlite3"
+        not_tired = json.loads(self_report_router.route(str(router_state), "I'm not tired"))
+        assert not_tired["handled"] is True
+        assert not_tired["captured"] is True
+        assert not_tired["category"] == "fatigue"
+        assert not_tired["state"] == "absent"
+        assert "not feeling tired" in not_tired["answer"]
+        assert not_tired["follow_up_queued"] is True
+
+        feeling_good = json.loads(self_report_router.route(str(router_state), "Sto alla grande"))
+        assert feeling_good["handled"] is True
+        assert feeling_good["category"] == "wellbeing"
+        assert feeling_good["state"] == "positive"
+        assert "salvato localmente" in feeling_good["answer"]
+
+        mixed_question = json.loads(self_report_router.route(
+            str(router_state), "I'm not tired, so why is my HRV lower today?"
+        ))
+        assert mixed_question["handled"] is False
+        assert mixed_question["captured"] is True
+        assert mixed_question["state"] == "absent"
 
         bootstrap = json.loads(agent.bootstrap(str(health), str(state), "How active have I been?"))
         assert bootstrap["max_steps"] == 15
