@@ -83,6 +83,10 @@ class OllamaOnDeviceEngine(context: Context) {
         require(modelFile.isFile) { "The selected Ollama model is not installed." }
         prepareFreshModel(model, modelFile, onStage)
 
+        val effectiveMaximumTokens = maxOf(
+            maximumTokens,
+            if (model.parameterCount == "0.6B") 1024 else 1536,
+        ).coerceAtMost(2048)
         val prompt = buildString {
             if (model.supportsThinking) append("/think\n")
             append("## QUESTION\n").append(question.trim())
@@ -94,7 +98,7 @@ class OllamaOnDeviceEngine(context: Context) {
         onStage("${model.id} · generating locally…")
 
         try {
-            engine.sendUserPrompt(prompt, maximumTokens).collect { tokenText ->
+            engine.sendUserPrompt(prompt, effectiveMaximumTokens).collect { tokenText ->
                 generatedTokens += 1
                 raw.append(tokenText)
                 val parsed = splitThinking(raw.toString())
@@ -105,7 +109,7 @@ class OllamaOnDeviceEngine(context: Context) {
                         answer = parsed.answer,
                         thinkingActive = parsed.thinkingActive,
                         generatedTokens = generatedTokens,
-                        maximumTokens = maximumTokens,
+                        maximumTokens = effectiveMaximumTokens,
                         tokensPerSecond = generatedTokens / elapsedSeconds,
                     )
                 )
