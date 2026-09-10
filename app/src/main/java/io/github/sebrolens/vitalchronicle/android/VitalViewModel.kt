@@ -389,10 +389,10 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
         launchBusy("Calibrating personal baselines locally…") {
             val databasePath = withContext(Dispatchers.IO) { database.readableDatabase.path }
             withContext(Dispatchers.Default) {
-                core.calibratePersonalAgent(databasePath, agentDatabasePath)
+                core.calibratePersonalAgent(databasePath, agentDatabasePath, java.util.Locale.getDefault().language)
             }
             refreshPersonalAgentState()
-            status = "Personal AI calibration complete"
+            status = "Personal AI calibration prepared · answer the selected questions in AI"
         }
     }
 

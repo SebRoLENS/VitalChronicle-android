@@ -286,8 +286,8 @@ class PersonalAgentController(
     }
 
     companion object {
-        private const val ACTION_OUTPUT_TOKENS = 1536
-        private const val FINAL_OUTPUT_TOKENS = 2048
+        private const val ACTION_OUTPUT_TOKENS = 2048
+        private const val FINAL_OUTPUT_TOKENS = 3200
         private const val MAX_TRANSCRIPT_CHARS = 42_000
         private const val INITIAL_CONTEXT_CHARS = 16_000
         private const val RECENT_CONTEXT_CHARS = 24_000

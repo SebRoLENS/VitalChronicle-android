@@ -524,6 +524,7 @@ enum class Screen(val label: String, val icon: ImageVector) {
                 }
             } }
         }
+        if (vm.personalAgentEnabled) item { PersonalAiAdminPanel(vm) }
 
         item {
             SectionTitle(
