@@ -10,6 +10,7 @@ data class PersonalAgentRunResult(
     val engineLabel: String,
     val toolCount: Int,
     val usedTools: List<String>,
+    val recordConversation: Boolean = true,
 )
 
 class PersonalAgentController(
@@ -27,6 +28,27 @@ class PersonalAgentController(
         preferDownloadedModel: Boolean,
         onStage: (String) -> Unit,
     ): PersonalAgentRunResult? {
+        // Subjective statements such as "I'm not tired" are personal context,
+        // not analysis requests. Capture them locally before starting any model,
+        // which also avoids spending a Gemini Nano generation quota on a memory update.
+        val selfReportRoute = runCatching {
+            JSONObject(core.routePersonalAgentSelfReport(agentDatabasePath, question))
+        }.getOrNull()
+        if (selfReportRoute?.optBoolean("handled", false) == true) {
+            val answer = selfReportRoute.optString("answer").trim()
+            if (answer.isNotBlank()) {
+                onStage("Personal AI · subjective report saved locally")
+                val directResult = PersonalAgentRunResult(
+                    answer = answer,
+                    engineLabel = "Personal AI · local memory",
+                    toolCount = 0,
+                    usedTools = listOf("self-report saved locally"),
+                )
+                runCatching { core.recordPersonalAgentExchange(agentDatabasePath, question, answer) }
+                return directResult
+            }
+        }
+
         val bootstrap = JSONObject(core.personalAgentBootstrap(databasePath, agentDatabasePath, question))
         val system = bootstrap.getString("system")
         val initialPrompt = bootstrap.getString("prompt")
@@ -37,6 +59,7 @@ class PersonalAgentController(
         val maxFactoryRepairs = bootstrap.optInt("max_factory_repairs", 3).coerceIn(1, 4)
         val maxRawSeriesProbes = bootstrap.optInt("max_raw_series_probes", 2).coerceIn(1, 4)
         val advertisedTools = jsonStrings(bootstrap.optJSONArray("tool_names"))
+        var nanoAvailabilityFailure: Throwable? = null
 
         suspend fun ollamaRun(): PersonalAgentRunResult? {
             val file = installedModel ?: return null
@@ -78,7 +101,8 @@ class PersonalAgentController(
             ) { prompt, tokens -> nano.personalAgentTurn(system, prompt, tokens, onStage) }
         } catch (e: CancellationException) {
             throw e
-        } catch (_: Throwable) {
+        } catch (e: Throwable) {
+            if (isNanoAvailabilityFailure(e)) nanoAvailabilityFailure = e
             null
         }
 
@@ -92,10 +116,25 @@ class PersonalAgentController(
                 nanoRun() ?: ollamaRun()
             }
         }
-        if (result != null) {
-            runCatching { core.recordPersonalAgentExchange(agentDatabasePath, question, result.answer) }
+
+        // AICore may reject a perfectly valid request because its on-device usage
+        // quota is temporarily exhausted or because Android considers the request
+        // background work. Do not call the same unavailable engine again through
+        // the legacy planner and never expose the raw platform exception to users.
+        val effectiveResult = result ?: nanoAvailabilityFailure?.let {
+            onStage("Android local AI temporarily unavailable")
+            PersonalAgentRunResult(
+                answer = nanoUnavailableAnswer(question),
+                engineLabel = "Gemini Nano · temporarily unavailable",
+                toolCount = 0,
+                usedTools = listOf("local AI temporarily unavailable"),
+                recordConversation = false,
+            )
         }
-        return result
+        if (effectiveResult != null && effectiveResult.recordConversation) {
+            runCatching { core.recordPersonalAgentExchange(agentDatabasePath, question, effectiveResult.answer) }
+        }
+        return effectiveResult
     }
 
     private suspend fun runAgentLoop(
@@ -285,6 +324,32 @@ class PersonalAgentController(
         }
     }
 
+    private fun isNanoAvailabilityFailure(error: Throwable): Boolean {
+        val text = buildString {
+            var current: Throwable? = error
+            var depth = 0
+            while (current != null && depth < 6) {
+                append(' ').append(current.message.orEmpty()).append(' ')
+                append(current.javaClass.simpleName)
+                current = current.cause
+                depth += 1
+            }
+        }.lowercase()
+        return NANO_AVAILABILITY_MARKERS.any(text::contains)
+    }
+
+    private fun nanoUnavailableAnswer(question: String): String {
+        val folded = question.lowercase()
+        val italian = listOf(" mi ", " sono ", " sto ", " ho ", " oggi ", " perché", " come ", " sonno", " stanc", " allen").any {
+            " $folded ".contains(it)
+        }
+        return if (italian) {
+            "L'AI generativa locale di Android è temporaneamente indisponibile per un limite di utilizzo di AICore o perché Android non consente la generazione in background. I tuoi dati restano sul dispositivo. Riprova più tardi mantenendo VitalChronicle in primo piano, oppure seleziona un modello GGUF scaricato nelle Impostazioni."
+        } else {
+            "Android's local generative AI is temporarily unavailable because of an AICore usage limit or background-generation restriction. Your data stay on the device. Try again later with VitalChronicle in the foreground, or select a downloaded GGUF model in Settings."
+        }
+    }
+
     companion object {
         private const val ACTION_OUTPUT_TOKENS = 2048
         private const val FINAL_OUTPUT_TOKENS = 3200
@@ -293,6 +358,15 @@ class PersonalAgentController(
         private const val RECENT_CONTEXT_CHARS = 24_000
         private const val FACTORY_GATE_AFTER_STEPS = 3
 
+        private val NANO_AVAILABILITY_MARKERS = setOf(
+            "usage quota",
+            "out of usage quota",
+            "quota exceeded",
+            "resource_exhausted",
+            "request cannot be processed",
+            "disallowed background usage",
+            "background usage",
+        )
         private val METRIC_READER_TOOLS = setOf(
             "get_metric_series", "get_data_coverage", "get_daily_summary", "get_baseline",
             "get_missing_data", "detect_outliers", "detect_trends",
