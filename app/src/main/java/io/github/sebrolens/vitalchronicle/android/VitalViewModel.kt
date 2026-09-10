@@ -360,7 +360,7 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun setPersonalAgentEnabled(enabled: Boolean) {
+    fun updatePersonalAgentEnabled(enabled: Boolean) {
         personalAgentEnabled = enabled
         agentPrefs.edit().putBoolean("enabled", enabled).apply()
         if (enabled) refreshPersonalAgentState()

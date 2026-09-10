@@ -511,7 +511,7 @@ enum class Screen(val label: String, val icon: ImageVector) {
         } } }
         item { SectionTitle("Personal AI", "A bounded local agent can choose deterministic tools iteratively, learn safe reusable declarative tools and store optional feedback separately from your health archive.") }
         item { SettingCard(Icons.Default.Psychology,"Personal health agent",if(vm.personalAgentEnabled) "Enabled · ${vm.agentBuiltInTools} built-in + ${vm.agentLearnedTools} learned tools" else "Disabled · the existing AI planner remains available") {
-            Switch(checked=vm.personalAgentEnabled,onCheckedChange=vm::setPersonalAgentEnabled)
+            Switch(checked=vm.personalAgentEnabled,onCheckedChange=vm::updatePersonalAgentEnabled)
         } }
         if (vm.personalAgentEnabled) item {
             Card { Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(9.dp)) {
