@@ -8,6 +8,7 @@ class PythonCore {
     private val nanoRouterModule by lazy { Python.getInstance().getModule("nano_router") }
     private val plannerModule by lazy { Python.getInstance().getModule("ai_planner_bridge") }
     private val agentModule by lazy { Python.getInstance().getModule("android_agent_bridge") }
+    private val selfReportRouterModule by lazy { Python.getInstance().getModule("android_self_report_router") }
 
     fun specs(): List<DataTypeSpec> = parseSpecs(module.callAttr("data_type_specs").toString())
 
@@ -50,6 +51,9 @@ class PythonCore {
 
     fun plannedEvidenceFromDatabase(databasePath: String, planJson: String): String =
         plannerModule.callAttr("evidence_from_sqlite", databasePath, planJson).toString()
+
+    fun routePersonalAgentSelfReport(agentPath: String, text: String): String =
+        selfReportRouterModule.callAttr("route", agentPath, text).toString()
 
     fun personalAgentBootstrap(databasePath: String, agentPath: String, question: String): String =
         agentModule.callAttr("bootstrap", databasePath, agentPath, question).toString()
