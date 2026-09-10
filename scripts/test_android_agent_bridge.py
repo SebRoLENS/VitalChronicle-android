@@ -31,14 +31,30 @@ def main() -> None:
         db.commit(); db.close()
 
         bootstrap = json.loads(agent.bootstrap(str(health), str(state), "How active have I been?"))
-        assert bootstrap["max_steps"] == 8
+        assert bootstrap["max_steps"] == 15
+        assert bootstrap["max_factory_repairs"] == 3
         assert bootstrap["tool_count"] >= 40
         assert "get_data_coverage" in bootstrap["prompt"]
+        assert "get_sleep_stage_series" in bootstrap["prompt"]
+        assert "Evidence, Reliability" in bootstrap["system"]
         assert "filesystem" in bootstrap["system"]
+
+        complex_request = json.loads(agent.bootstrap(
+            str(health), str(state),
+            "How often do days 30% above my personal activity baseline affect the next day?",
+        ))
+        assert complex_request["factory_candidate"] is True
+        assert complex_request["factory_capability"].startswith("analysis.composed")
 
         available = json.loads(agent.execute_tool(str(health), str(state), "get_available_metrics", "{}"))
         assert available["count"] == 1
         assert available["data_types"][0]["data_type"] == "steps"
+
+        self_report = json.loads(agent.bootstrap(str(health), str(state), "Mi sento stanco oggi"))
+        assert "relevant_self_reports" in self_report["prompt"]
+        pending = json.loads(agent.state(str(health), str(state)))["pending_feedback"]
+        assert pending and pending["feedback_id"]
+        agent.answer_feedback(str(health), str(state), pending["feedback_id"], "Soprattutto muscolare")
 
         queued = json.loads(agent.execute_tool(
             str(health), str(state), "ask_user_feedback",
@@ -64,7 +80,7 @@ def main() -> None:
         assert reset["learned_tools"] == 0
         assert reset["built_in_tools"] >= 40
 
-    print("Android Personal Health Agent bridge OK")
+    print("Android Personal Health Agent bridge v2 OK")
 
 
 if __name__ == "__main__":

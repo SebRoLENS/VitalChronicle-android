@@ -16,9 +16,6 @@ import kotlinx.coroutines.flow.collect
 import org.json.JSONObject
 
 class GeminiNanoEngine {
-    // Explicit FULL selection improves capability when AICore exposes that
-    // variant. The default stable client remains a mandatory compatibility
-    // fallback because not every supported device exposes every model profile.
     private val compatibleModelDelegate = lazy { Generation.getClient(generationConfig {}) }
     private val compatibleModel by compatibleModelDelegate
     private val accurateModelDelegate = lazy {
@@ -77,10 +74,7 @@ class GeminiNanoEngine {
         }
     }
 
-    private suspend fun prepare(
-        selection: ModelSelection,
-        progress: (String) -> Unit,
-    ): String {
+    private suspend fun prepare(selection: ModelSelection, progress: (String) -> Unit): String {
         val model = selection.model
         progress("Checking Android built-in AI · ${selection.profile}…")
         when (val featureStatus = model.checkStatus()) {
@@ -130,7 +124,7 @@ class GeminiNanoEngine {
         val request = JSONObject()
             .put("system", systemPrompt)
             .put("prompt", prompt)
-            .put("max_output_tokens", maximumTokens.coerceIn(128, 768))
+            .put("max_output_tokens", maximumTokens.coerceIn(128, 2048))
             .toString()
         return plan(request, progress)
     }
@@ -145,7 +139,7 @@ class GeminiNanoEngine {
         val planner = JSONObject(plannerRequestJson)
         val system = planner.getString("system")
         val prompt = planner.getString("prompt")
-        val maxOutput = planner.optInt("max_output_tokens", 560).coerceIn(128, 768)
+        val maxOutput = planner.optInt("max_output_tokens", 560).coerceIn(128, 2048)
         progress("$name · ${selection.profile} · choosing health data and time range…")
         val request = generateContentRequest(SystemInstruction(system), TextPart(prompt)) {
             temperature = 0.0f
@@ -191,18 +185,18 @@ class GeminiNanoEngine {
         }.getOrNull().orEmpty().ifBlank { "general" }
 
         val requestedOutputTokens = when (retrievalMode) {
-            "specific_relation", "specific" -> 768
-            "domain" -> 896
-            else -> 1024
+            "specific_relation", "specific" -> 1024
+            "domain" -> 1280
+            else -> 1536
         }
         val thinkingAvailable = runCatching { model.isThinkingModeAvailable() }.getOrDefault(false)
 
         val system = """
             You are VitalChronicle's fully on-device explanation layer, not a medical device.
-            Answer the exact question in the first paragraph. Use only the deterministic evidence supplied and never invent missing measurements.
-            Clearly separate measured facts, calculated relationships, and cautious interpretation. Missing data are not zero; association is not causation.
-            If relation_checks says not_calculated, explain its stated reason and paired-day count instead of guessing. Mention material coverage limits and incomplete-day bias.
-            Respond in the user's language. Use light Markdown: short headings, **bold** key findings, and bullets where useful. Prefer Key finding, Evidence, and Reliability sections, omitting empty sections. No tables or fenced code blocks.
+            Answer the exact question in the first paragraph. Use only deterministic evidence supplied by the app and never invent missing measurements. Missing data are not zero; association is not causation.
+            Be result-first and concise. Do not add Evidence, Reliability, Methods, Sources, data-inventory or tool-log sections unless the user explicitly asks for methodological detail. Do not narrate the evidence-selection process.
+            Mention only the one or two measurements or coverage limitations that materially affect the conclusion. If a requested relationship was not calculated, state the concrete reason briefly instead of guessing.
+            Respond in the user's language with light Markdown. No tables or fenced code blocks unless specifically requested.
         """.trimIndent()
         val prompt = """
             ## QUESTION
@@ -221,9 +215,6 @@ class GeminiNanoEngine {
 
         var maxOutputTokens = requestedOutputTokens
         var generationRequest = request(maxOutputTokens)
-
-        // Optional runtime optimizations and telemetry must never make the core
-        // generation path unavailable on an otherwise compatible AICore build.
         runCatching { model.warmup() }
         val tokenTelemetry = runCatching {
             val input = model.countTokens(generationRequest).totalTokens

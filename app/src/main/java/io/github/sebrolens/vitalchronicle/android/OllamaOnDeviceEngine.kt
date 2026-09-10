@@ -64,7 +64,7 @@ class OllamaOnDeviceEngine(context: Context) {
     ): String {
         val raw = StringBuilder()
         onStage("Personal agent · selecting the next safe action…")
-        engine.sendUserPrompt(prompt, maximumTokens.coerceIn(128, 768)).collect { raw.append(it) }
+        engine.sendUserPrompt(prompt, maximumTokens.coerceIn(128, 2048)).collect { raw.append(it) }
         val parsed = splitThinking(raw.toString())
         val text = parsed.answer.ifBlank { stripControlTags(raw.toString()).trim() }
         require(text.isNotBlank()) { "The local personal agent returned an empty response." }
@@ -83,6 +83,10 @@ class OllamaOnDeviceEngine(context: Context) {
         require(modelFile.isFile) { "The selected Ollama model is not installed." }
         prepareFreshModel(model, modelFile, onStage)
 
+        val effectiveMaximumTokens = maxOf(
+            maximumTokens,
+            if (model.parameterCount == "0.6B") 1024 else 1536,
+        ).coerceAtMost(2048)
         val prompt = buildString {
             if (model.supportsThinking) append("/think\n")
             append("## QUESTION\n").append(question.trim())
@@ -94,7 +98,7 @@ class OllamaOnDeviceEngine(context: Context) {
         onStage("${model.id} · generating locally…")
 
         try {
-            engine.sendUserPrompt(prompt, maximumTokens).collect { tokenText ->
+            engine.sendUserPrompt(prompt, effectiveMaximumTokens).collect { tokenText ->
                 generatedTokens += 1
                 raw.append(tokenText)
                 val parsed = splitThinking(raw.toString())
@@ -105,7 +109,7 @@ class OllamaOnDeviceEngine(context: Context) {
                         answer = parsed.answer,
                         thinkingActive = parsed.thinkingActive,
                         generatedTokens = generatedTokens,
-                        maximumTokens = maximumTokens,
+                        maximumTokens = effectiveMaximumTokens,
                         tokensPerSecond = generatedTokens / elapsedSeconds,
                     )
                 )
@@ -139,8 +143,6 @@ class OllamaOnDeviceEngine(context: Context) {
         try {
             engine.loadModel(file.absolutePath)
         } catch (e: UnsupportedArchitectureException) {
-            // The upstream Android wrapper currently maps every native model-load
-            // failure to this exception, not only an unsupported CPU architecture.
             throw IllegalStateException(
                 "llama.cpp could not load ${model.id}. The model file may be damaged, " +
                     "unreadable, or incompatible with the installed native backend.",
@@ -222,11 +224,10 @@ class OllamaOnDeviceEngine(context: Context) {
         private const val NATIVE_INITIALIZATION_TIMEOUT_MS = 30_000L
         private val SYSTEM_PROMPT = """
             You are VitalChronicle's fully on-device health-data explanation layer, not a medical device.
-            Answer the exact question first and use only the deterministic evidence supplied by the app.
-            Never invent missing measurements. Missing data are not zero and association is not causation.
-            Separate measured facts, calculated relationships, and cautious interpretation. State material coverage limits.
-            Respond in the user's language with light Markdown: short headings, **bold** key findings, and concise bullets.
-            Keep hidden/internal reasoning inside the model's thinking channel and provide a self-contained final answer.
+            Answer the exact question first and use only deterministic evidence supplied by the app. Never invent missing measurements; missing data are not zero and association is not causation.
+            Be result-first and concise. Do not create Evidence, Reliability, Methods, Sources, data-inventory or tool-log sections unless the user explicitly asks for methodological detail. Do not narrate evidence collection.
+            Mention only measurements and coverage limitations that materially change the conclusion. Separate user-reported context from measured facts when relevant.
+            Respond in the user's language with light Markdown and a self-contained final answer. Keep hidden/internal reasoning inside the model's thinking channel.
         """.trimIndent()
     }
 }

@@ -1,0 +1,40 @@
+name: Personal AI parity
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  agent-core:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout Android repository
+        uses: actions/checkout@v4
+
+      - name: Checkout canonical VitalChronicle core
+        uses: actions/checkout@v4
+        with:
+          repository: SebRoLENS/VitalChronicle
+          ref: main
+          path: upstream/VitalChronicle
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Sync canonical AI and agent core
+        run: >-
+          python scripts/sync_shared_core.py
+          --source upstream/VitalChronicle
+          --dest app/src/main/python
+          --assets app/src/main/assets
+
+      - name: Test Android Personal Health Agent v2 bridge
+        run: PYTHONPATH=app/src/main/python python scripts/test_android_agent_bridge.py
