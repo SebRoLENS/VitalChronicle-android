@@ -1,0 +1,51 @@
+name: Apply Personal Agent Compile Fix
+
+on:
+  push:
+    branches: [feature/personal-health-agent]
+    paths:
+      - .github/workflows/apply-personal-agent-fix.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/personal-health-agent
+
+      - name: Rename colliding JVM setter
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          vm = Path('app/src/main/java/io/github/sebrolens/vitalchronicle/android/VitalViewModel.kt')
+          text = vm.read_text(encoding='utf-8')
+          old = 'fun setPersonalAgentEnabled(enabled: Boolean)'
+          new = 'fun updatePersonalAgentEnabled(enabled: Boolean)'
+          assert text.count(old) == 1, text.count(old)
+          vm.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          main = Path('app/src/main/java/io/github/sebrolens/vitalchronicle/android/MainActivity.kt')
+          text = main.read_text(encoding='utf-8')
+          old = 'vm::setPersonalAgentEnabled'
+          new = 'vm::updatePersonalAgentEnabled'
+          assert text.count(old) == 1, text.count(old)
+          main.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+
+      - name: Keep helper workflow out of generated commit
+        run: git checkout HEAD -- .github/workflows/apply-personal-agent-fix.yml
+
+      - name: Commit compile fix
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/src/main/java/io/github/sebrolens/vitalchronicle/android/VitalViewModel.kt app/src/main/java/io/github/sebrolens/vitalchronicle/android/MainActivity.kt
+          git commit -m 'fix: avoid Personal AI JVM setter clash'
+          git push origin HEAD:feature/personal-health-agent
