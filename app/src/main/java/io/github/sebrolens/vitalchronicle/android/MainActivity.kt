@@ -130,6 +130,7 @@ enum class Screen(val label: String, val icon: ImageVector) {
                 icon = Icons.Default.Favorite
             )
         }
+        if (vm.personalAgentEnabled && vm.counts.isNotEmpty()) item { PersonalHealthScoresPanel(vm) }
         if(vm.metrics.isEmpty()) item {
             EmptyCard(
                 if(vm.counts.isEmpty()) "No local measurements yet" else "Building local summaries",
@@ -516,7 +517,7 @@ enum class Screen(val label: String, val icon: ImageVector) {
         if (vm.personalAgentEnabled) item {
             Card { Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(9.dp)) {
                 Text("Local personalisation",fontWeight=FontWeight.SemiBold)
-                Text("${vm.agentAssociationCount} learned associations · calibration ${if(vm.agentCalibrationVersion > 0) "complete" else "not run"}",style=MaterialTheme.typography.bodySmall)
+                Text("${vm.agentAssociationCount} learned associations · calibration ${if(vm.agentCalibrationVersion > 0) "complete" else "not complete"}",style=MaterialTheme.typography.bodySmall)
                 Text("The health database is read-only to the agent. Learned tools are restricted to VitalChronicle's declarative allow-list; no shell, browser, arbitrary code or cloud AI access is exposed.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                     Button(onClick=vm::runPersonalAgentCalibration,enabled=!vm.busy && vm.counts.isNotEmpty()) { Text(if(vm.agentCalibrationVersion > 0) "Recalibrate" else "Calibrate") }

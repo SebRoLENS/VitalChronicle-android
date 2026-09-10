@@ -74,6 +74,7 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
     private var awaitingUpdateInstallPermission = false
     private var modelDownloadJob: Job? = null
     private var analysisJob: Job? = null
+    private var calibrationBootstrapChecked = false
 
     val googlePackageName: String = app.packageName
     val googleSigningSha1: String = runCatching { GoogleAuthorizationManager.signingSha1(app) }
@@ -163,6 +164,27 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
                     core.dashboardFromDatabase(databasePath, today.toString())
                 }
                 metrics = parseMetricCards(dashboardJson)
+                if (personalAgentEnabled && !calibrationBootstrapChecked) {
+                    calibrationBootstrapChecked = true
+                    val localAgentState = JSONObject(withContext(Dispatchers.Default) {
+                        core.personalAgentState(databasePath, agentDatabasePath)
+                    })
+                    val needsCalibration = localAgentState.optInt("calibration_version", 0) < 2 &&
+                        !localAgentState.optBoolean("calibration_pending", false)
+                    if (needsCalibration) {
+                        val calibration = JSONObject(withContext(Dispatchers.Default) {
+                            core.calibratePersonalAgent(
+                                databasePath,
+                                agentDatabasePath,
+                                java.util.Locale.getDefault().language,
+                            )
+                        })
+                        if (calibration.optBoolean("pending", false)) {
+                            status = "Personal AI calibration ready · answer the selected questions in AI"
+                        }
+                    }
+                    refreshPersonalAgentState()
+                }
                 if (metrics.isEmpty()) {
                     status = "Data loaded · no dashboard metric could be derived yet"
                 }
@@ -363,7 +385,11 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
     fun updatePersonalAgentEnabled(enabled: Boolean) {
         personalAgentEnabled = enabled
         agentPrefs.edit().putBoolean("enabled", enabled).apply()
-        if (enabled) refreshPersonalAgentState()
+        if (enabled) {
+            calibrationBootstrapChecked = false
+            refreshPersonalAgentState()
+            refresh()
+        }
     }
 
     fun refreshPersonalAgentState() {
