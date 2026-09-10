@@ -64,7 +64,7 @@ class OllamaOnDeviceEngine(context: Context) {
     ): String {
         val raw = StringBuilder()
         onStage("Personal agent · selecting the next safe action…")
-        engine.sendUserPrompt(prompt, maximumTokens.coerceIn(128, 2048)).collect { raw.append(it) }
+        engine.sendUserPrompt(prompt, maximumTokens.coerceIn(128, 3200)).collect { raw.append(it) }
         val parsed = splitThinking(raw.toString())
         val text = parsed.answer.ifBlank { stripControlTags(raw.toString()).trim() }
         require(text.isNotBlank()) { "The local personal agent returned an empty response." }
@@ -85,8 +85,8 @@ class OllamaOnDeviceEngine(context: Context) {
 
         val effectiveMaximumTokens = maxOf(
             maximumTokens,
-            if (model.parameterCount == "0.6B") 1024 else 1536,
-        ).coerceAtMost(2048)
+            if (model.parameterCount == "0.6B") 1536 else 2048,
+        ).coerceAtMost(3072)
         val prompt = buildString {
             if (model.supportsThinking) append("/think\n")
             append("## QUESTION\n").append(question.trim())
