@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Broken circular orbit, inspired by the desktop VitalChronicle mark. -->
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#45D5E8"
+        android:strokeWidth="7"
+        android:strokeLineCap="round"
+        android:pathData="M77,29 A32,32 0,1 0 80,75" />
+
+    <!-- Orbit node. -->
+    <path
+        android:fillColor="#8BD8FF"
+        android:pathData="M84,31 A5,5 0,1 1 83.99,31 Z" />
+
+    <!-- Person / wellbeing node. -->
+    <path
+        android:fillColor="#8BD8FF"
+        android:pathData="M54,34 A7,7 0,1 1 53.99,34 Z" />
+
+    <!-- Heart. -->
+    <path
+        android:fillColor="#8BD8FF"
+        android:pathData="M54,79 C49,74 36,67 36,56 C36,48 45,44 54,52 C63,44 72,48 72,56 C72,67 59,74 54,79 Z" />
+
+    <!-- ECG cut-line. -->
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#0D2534"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M40,59 L48,59 L51,53 L56,66 L61,58 L68,58" />
+</vector>
