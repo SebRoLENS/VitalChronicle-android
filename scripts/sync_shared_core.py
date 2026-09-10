@@ -4,9 +4,25 @@ from __future__ import annotations
 import argparse, json, shutil, subprocess
 from pathlib import Path
 
-# __init__.py is platform-owned.  The desktop initializer installs desktop-only
+# __init__.py is platform-owned. The desktop initializer installs desktop-only
 # patches and must never replace Android's minimal package bootstrap.
-CORE = ["analysis.py", "heart_rate_core.py", "ai_insights.py", "ai_pipeline.py", "ai_query_planner_core.py", "deterministic_detail_core.py", "agent_store.py", "agent_tools.py", "constants.py", "i18n.py", "utils.py"]
+#
+# Keep the reusable AI/agent implementation canonical in the desktop repository.
+# Android owns only the platform adapters and inference engines.
+CORE = [
+    "analysis.py",
+    "heart_rate_core.py",
+    "ai_insights.py",
+    "ai_pipeline.py",
+    "ai_query_planner_core.py",
+    "deterministic_detail_core.py",
+    "agent_store.py",
+    "agent_tools.py",
+    "agent_tool_factory.py",
+    "constants.py",
+    "i18n.py",
+    "utils.py",
+]
 
 def main():
     p=argparse.ArgumentParser(); p.add_argument("--source",required=True); p.add_argument("--dest",required=True); p.add_argument("--assets",required=True); a=p.parse_args()
