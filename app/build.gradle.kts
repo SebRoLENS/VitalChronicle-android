@@ -17,9 +17,9 @@ android {
         applicationId = "io.github.sebrolens.vitalchronicle.android"
         minSdk = 26
         targetSdk = 36
-        // 0.7.0 brings the Android Personal Health Agent substantially closer to desktop parity.
-        versionCode = 28
-        versionName = "0.7.0"
+        // 0.7.1 fixes subjective self-report routing and local-AI availability fallback.
+        versionCode = 29
+        versionName = "0.7.1"
         ndk {
             abiFilters += listOf("arm64-v8a")
         }
