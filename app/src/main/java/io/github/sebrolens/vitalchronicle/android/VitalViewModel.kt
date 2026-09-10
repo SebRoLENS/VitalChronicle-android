@@ -33,6 +33,9 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
     private val nano = GeminiNanoEngine()
     private val ollamaModels = OllamaModelManager(app, http)
     private val ollama = OllamaOnDeviceEngine(app)
+    private val agentPrefs = app.getSharedPreferences("personal_ai", Context.MODE_PRIVATE)
+    private val agentDatabasePath = app.getDatabasePath("vitalchronicle_agent.sqlite3").absolutePath
+    private val personalAgent = PersonalAgentController(core, nano, ollama, agentDatabasePath)
     val specs: List<DataTypeSpec> by lazy { core.specs() }
     private val googleScopes: Set<String> by lazy { specs.map { it.scope }.filter { it.isNotBlank() }.toSet() }
 
@@ -57,6 +60,14 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
     var analysisPlanSummary by mutableStateOf<String?>(null); private set
     var analysisPlanReason by mutableStateOf<String?>(null); private set
     var advancedOpen by mutableStateOf(false)
+    var personalAgentEnabled by mutableStateOf(agentPrefs.getBoolean("enabled", true)); private set
+    var agentBuiltInTools by mutableStateOf(0); private set
+    var agentLearnedTools by mutableStateOf(0); private set
+    var agentAssociationCount by mutableStateOf(0); private set
+    var agentCalibrationVersion by mutableStateOf(0); private set
+    var agentFeedbackId by mutableStateOf<String?>(null); private set
+    var agentFeedbackQuestion by mutableStateOf<String?>(null); private set
+    var agentFeedbackReason by mutableStateOf<String?>(null); private set
     var lastError by mutableStateOf<String?>(null); private set
     var updateState by mutableStateOf<AppUpdateState>(AppUpdateState.Idle); private set
     var updatePromptDismissed by mutableStateOf(false); private set
@@ -129,6 +140,7 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
         }
         probeAi()
         checkForAppUpdate()
+        refreshPersonalAgentState()
     }
 
     /**
@@ -348,6 +360,78 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun updatePersonalAgentEnabled(enabled: Boolean) {
+        personalAgentEnabled = enabled
+        agentPrefs.edit().putBoolean("enabled", enabled).apply()
+        if (enabled) refreshPersonalAgentState()
+    }
+
+    fun refreshPersonalAgentState() {
+        viewModelScope.launch {
+            runCatching {
+                val databasePath = withContext(Dispatchers.IO) { database.readableDatabase.path }
+                val root = JSONObject(withContext(Dispatchers.Default) {
+                    core.personalAgentState(databasePath, agentDatabasePath)
+                })
+                agentBuiltInTools = root.optInt("built_in_tools", 0)
+                agentLearnedTools = root.optInt("learned_tools", 0)
+                agentAssociationCount = root.optInt("associations", 0)
+                agentCalibrationVersion = root.optInt("calibration_version", 0)
+                val pending = root.optJSONObject("pending_feedback")
+                agentFeedbackId = pending?.optString("feedback_id")?.takeIf { it.isNotBlank() }
+                agentFeedbackQuestion = pending?.optString("question")?.takeIf { it.isNotBlank() }
+                agentFeedbackReason = pending?.optString("reason")?.takeIf { it.isNotBlank() }
+            }
+        }
+    }
+
+    fun runPersonalAgentCalibration() {
+        launchBusy("Calibrating personal baselines locally…") {
+            val databasePath = withContext(Dispatchers.IO) { database.readableDatabase.path }
+            withContext(Dispatchers.Default) {
+                core.calibratePersonalAgent(databasePath, agentDatabasePath)
+            }
+            refreshPersonalAgentState()
+            status = "Personal AI calibration complete"
+        }
+    }
+
+    fun resetPersonalAgent() {
+        launchBusy("Resetting Personal AI state…") {
+            val databasePath = withContext(Dispatchers.IO) { database.readableDatabase.path }
+            withContext(Dispatchers.Default) {
+                core.resetPersonalAgent(databasePath, agentDatabasePath)
+            }
+            refreshPersonalAgentState()
+            status = "Personal AI reset · health archive unchanged"
+        }
+    }
+
+    fun answerPersonalAgentFeedback(answer: String) {
+        val feedbackId = agentFeedbackId ?: return
+        if (answer.isBlank()) return
+        launchBusy("Saving local personalisation feedback…") {
+            val databasePath = withContext(Dispatchers.IO) { database.readableDatabase.path }
+            withContext(Dispatchers.Default) {
+                core.answerPersonalAgentFeedback(databasePath, agentDatabasePath, feedbackId, answer)
+            }
+            refreshPersonalAgentState()
+            status = "Personalisation feedback saved locally"
+        }
+    }
+
+    fun skipPersonalAgentFeedback() {
+        val feedbackId = agentFeedbackId ?: return
+        launchBusy("Skipping personalisation question…") {
+            val databasePath = withContext(Dispatchers.IO) { database.readableDatabase.path }
+            withContext(Dispatchers.Default) {
+                core.dismissPersonalAgentFeedback(databasePath, agentDatabasePath, feedbackId)
+            }
+            refreshPersonalAgentState()
+            status = "Personalisation question skipped"
+        }
+    }
+
     fun sync() {
         launchBusy("Starting Google Health sync…") {
             syncer.sync(historyDays) { status = it }
@@ -374,6 +458,39 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
                         installedModel != null &&
                         (hardware.ggufHardwareAccelerated || !nanoCapability.supported)
                 )
+
+            if (personalAgentEnabled && aiEngine != AiEngine.DETERMINISTIC) {
+                status = "Starting the local personal health agent…"
+                val agentResult = try {
+                    personalAgent.run(
+                        databasePath = databasePath,
+                        question = question,
+                        aiEngine = aiEngine,
+                        selectedModel = selectedModel,
+                        installedModel = installedModel,
+                        preferDownloadedModel = preferDownloadedModel,
+                        onStage = { status = it },
+                    )
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Throwable) {
+                    null
+                }
+                if (agentResult != null) {
+                    aiAnswer = agentResult.answer
+                    aiModelName = agentResult.engineLabel
+                    analysisPlanSummary = if (agentResult.usedTools.isEmpty()) {
+                        "Personal agent · ${agentResult.toolCount} safe tools available"
+                    } else {
+                        "Personal agent · ${agentResult.usedTools.distinct().joinToString(", ")}"
+                    }
+                    analysisPlanReason = "Deterministic tools selected iteratively from the local archive; missing data are not zero-filled."
+                    status = "Personal agent analysis complete"
+                    refreshPersonalAgentState()
+                    return@launchBusy
+                }
+                status = "Personal agent unavailable · using the existing safe planner fallback…"
+            }
 
             val rawPlan = when (aiEngine) {
                 AiEngine.DETERMINISTIC -> ""

@@ -7,6 +7,7 @@ class PythonCore {
     private val dashboardModule by lazy { Python.getInstance().getModule("android_dashboard") }
     private val nanoRouterModule by lazy { Python.getInstance().getModule("nano_router") }
     private val plannerModule by lazy { Python.getInstance().getModule("ai_planner_bridge") }
+    private val agentModule by lazy { Python.getInstance().getModule("android_agent_bridge") }
 
     fun specs(): List<DataTypeSpec> = parseSpecs(module.callAttr("data_type_specs").toString())
 
@@ -49,6 +50,44 @@ class PythonCore {
 
     fun plannedEvidenceFromDatabase(databasePath: String, planJson: String): String =
         plannerModule.callAttr("evidence_from_sqlite", databasePath, planJson).toString()
+
+    fun personalAgentBootstrap(databasePath: String, agentPath: String, question: String): String =
+        agentModule.callAttr("bootstrap", databasePath, agentPath, question).toString()
+
+    fun executePersonalAgentTool(
+        databasePath: String,
+        agentPath: String,
+        name: String,
+        argumentsJson: String,
+    ): String = agentModule.callAttr(
+        "execute_tool", databasePath, agentPath, name, argumentsJson
+    ).toString()
+
+    fun personalAgentState(databasePath: String, agentPath: String): String =
+        agentModule.callAttr("state", databasePath, agentPath).toString()
+
+    fun calibratePersonalAgent(databasePath: String, agentPath: String): String =
+        agentModule.callAttr("calibrate", databasePath, agentPath).toString()
+
+    fun answerPersonalAgentFeedback(
+        databasePath: String,
+        agentPath: String,
+        feedbackId: String,
+        answer: String,
+    ): String = agentModule.callAttr(
+        "answer_feedback", databasePath, agentPath, feedbackId, answer
+    ).toString()
+
+    fun dismissPersonalAgentFeedback(
+        databasePath: String,
+        agentPath: String,
+        feedbackId: String,
+    ): String = agentModule.callAttr(
+        "dismiss_feedback", databasePath, agentPath, feedbackId
+    ).toString()
+
+    fun resetPersonalAgent(databasePath: String, agentPath: String): String =
+        agentModule.callAttr("reset_personalisation", databasePath, agentPath).toString()
 
     fun compactEvidence(evidenceJson: String): String =
         module.callAttr("compact_evidence", evidenceJson).toString()

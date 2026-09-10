@@ -44,6 +44,14 @@ The on-device catalog currently provides the pinned Q4_K_M artifacts for `qwen3:
 
 VitalChronicle explicitly extracts the packaged ARM CPU backends at installation time. This is required by llama.cpp's runtime backend selection and keeps the baseline ARMv8 path available on devices such as the Exynos 9611-based Galaxy M31.
 
+## Personal Health Agent
+
+Version 0.6 adds the same safe Personal Health Agent concept introduced in VitalChronicle desktop. The Android agent can iteratively select deterministic health tools, check metric-specific coverage, compare periods, inspect sleep/recovery/training evidence, reuse or create allow-listed declarative learned tools, and use optional user feedback for local personalisation.
+
+The mobile runtime uses a strict JSON action protocol so the agent works with both the bundled on-device llama.cpp chat runtime and Gemini Nano without requiring native function-calling support. The model never receives shell, browser, arbitrary-code, network, filesystem or direct health-database-write tools. Health data are read-only to the agent, while learned tools, feedback, calibration metadata and personal associations live separately in the app-private `vitalchronicle_agent.sqlite3` database. If the agent cannot complete its bounded tool loop, VitalChronicle automatically falls back to the existing shared AI-first deterministic planner.
+
+The shared desktop `agent_store.py`, `agent_tools.py` and deterministic detail core are synchronized during CI alongside the existing analysis core, keeping the calculations and safety boundaries aligned across desktop and Android.
+
 ## Automatic updates
 
 From version 0.2.2 onward, VitalChronicle checks the latest GitHub Release at launch. When a newer version exists, the app downloads the canonical signed APK to its private cache, verifies the package name, version and signing certificate, and opens Android's package installer. Android always requires the user to confirm installation and may first require permission to install apps from this source.

@@ -47,6 +47,30 @@ class OllamaOnDeviceEngine(context: Context) {
         return text
     }
 
+    suspend fun beginPersonalAgent(
+        model: OllamaModelSpec,
+        modelFile: File,
+        systemPrompt: String,
+        onStage: (String) -> Unit,
+    ) {
+        require(modelFile.isFile) { "The selected Ollama model is not installed." }
+        prepareFreshModel(model, modelFile, onStage, systemPrompt = systemPrompt)
+    }
+
+    suspend fun personalAgentTurn(
+        prompt: String,
+        maximumTokens: Int,
+        onStage: (String) -> Unit,
+    ): String {
+        val raw = StringBuilder()
+        onStage("Personal agent · selecting the next safe action…")
+        engine.sendUserPrompt(prompt, maximumTokens.coerceIn(128, 768)).collect { raw.append(it) }
+        val parsed = splitThinking(raw.toString())
+        val text = parsed.answer.ifBlank { stripControlTags(raw.toString()).trim() }
+        require(text.isNotBlank()) { "The local personal agent returned an empty response." }
+        return text
+    }
+
     suspend fun answer(
         model: OllamaModelSpec,
         modelFile: File,
