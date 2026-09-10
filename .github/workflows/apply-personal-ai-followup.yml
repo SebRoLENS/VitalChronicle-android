@@ -1,0 +1,64 @@
+name: Apply Personal AI follow-up wiring
+
+on:
+  push:
+    branches:
+      - feature/desktop-ai-parity
+
+permissions:
+  contents: write
+
+jobs:
+  wire:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/desktop-ai-parity
+          fetch-depth: 0
+      - name: Wire Personal AI UI and final output budget
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          main = Path('app/src/main/java/io/github/sebrolens/vitalchronicle/android/MainActivity.kt')
+          text = main.read_text()
+          marker = '''        }\n\n        item {\n            SectionTitle(\n                "Application updates",'''
+          replacement = '''        }\n        if (vm.personalAgentEnabled) item { PersonalAiAdminPanel(vm) }\n\n        item {\n            SectionTitle(\n                "Application updates",'''
+          if 'PersonalAiAdminPanel(vm)' not in text:
+              if marker not in text:
+                  raise SystemExit('MainActivity insertion marker not found')
+              text = text.replace(marker, replacement, 1)
+              main.write_text(text)
+
+          controller = Path('app/src/main/java/io/github/sebrolens/vitalchronicle/android/PersonalAgentController.kt')
+          text = controller.read_text()
+          text = text.replace('private const val ACTION_OUTPUT_TOKENS = 1536', 'private const val ACTION_OUTPUT_TOKENS = 2048')
+          text = text.replace('private const val FINAL_OUTPUT_TOKENS = 2048', 'private const val FINAL_OUTPUT_TOKENS = 3200')
+          controller.write_text(text)
+
+          vm = Path('app/src/main/java/io/github/sebrolens/vitalchronicle/android/VitalViewModel.kt')
+          text = vm.read_text()
+          text = text.replace(
+              'core.calibratePersonalAgent(databasePath, agentDatabasePath)',
+              'core.calibratePersonalAgent(databasePath, agentDatabasePath, java.util.Locale.getDefault().language)',
+              1,
+          )
+          text = text.replace(
+              'status = "Personal AI calibration complete"',
+              'status = "Personal AI calibration prepared · answer the selected questions in AI"',
+              1,
+          )
+          vm.write_text(text)
+          PY
+      - name: Remove one-shot workflow and commit wiring
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/apply-personal-ai-followup.yml
+          git add app/src/main/java/io/github/sebrolens/vitalchronicle/android/MainActivity.kt \
+                  app/src/main/java/io/github/sebrolens/vitalchronicle/android/PersonalAgentController.kt \
+                  app/src/main/java/io/github/sebrolens/vitalchronicle/android/VitalViewModel.kt
+          git commit -m "Wire Personal AI admin UI and final output budget"
+          git push origin HEAD:feature/desktop-ai-parity
