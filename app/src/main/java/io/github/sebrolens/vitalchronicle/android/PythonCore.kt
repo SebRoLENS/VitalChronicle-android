@@ -63,11 +63,20 @@ class PythonCore {
         "execute_tool", databasePath, agentPath, name, argumentsJson
     ).toString()
 
+    fun recordPersonalAgentExchange(agentPath: String, question: String, answer: String): String =
+        agentModule.callAttr("record_exchange", agentPath, question, answer).toString()
+
+    fun clearPersonalAgentConversation(agentPath: String): String =
+        agentModule.callAttr("clear_conversation", agentPath).toString()
+
     fun personalAgentState(databasePath: String, agentPath: String): String =
         agentModule.callAttr("state", databasePath, agentPath).toString()
 
-    fun calibratePersonalAgent(databasePath: String, agentPath: String): String =
-        agentModule.callAttr("calibrate", databasePath, agentPath).toString()
+    fun calibratePersonalAgent(
+        databasePath: String,
+        agentPath: String,
+        languageHint: String = "",
+    ): String = agentModule.callAttr("calibrate", databasePath, agentPath, languageHint).toString()
 
     fun answerPersonalAgentFeedback(
         databasePath: String,
@@ -84,6 +93,22 @@ class PythonCore {
         feedbackId: String,
     ): String = agentModule.callAttr(
         "dismiss_feedback", databasePath, agentPath, feedbackId
+    ).toString()
+
+    fun deletePersonalAgentLearnedTool(
+        databasePath: String,
+        agentPath: String,
+        name: String,
+    ): String = agentModule.callAttr(
+        "delete_learned_tool", databasePath, agentPath, name
+    ).toString()
+
+    fun forgetPersonalAgentAssociation(
+        databasePath: String,
+        agentPath: String,
+        key: String,
+    ): String = agentModule.callAttr(
+        "forget_user_model", databasePath, agentPath, key
     ).toString()
 
     fun resetPersonalAgent(databasePath: String, agentPath: String): String =
