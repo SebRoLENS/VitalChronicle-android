@@ -26,6 +26,20 @@ jobs:
       - name: Apply Personal Health Agent integration
         run: python scripts/apply-personal-health-agent.py
 
+      - name: Keep canonical workflow unchanged and chain the agent test into existing CI
+        shell: bash
+        run: |
+          git checkout HEAD -- .github/workflows/android.yml
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/test_ai_query_planner.py')
+          text = p.read_text(encoding='utf-8')
+          marker = '# Personal Health Agent bridge compatibility check'
+          if marker not in text:
+              text += '''\n\n# Personal Health Agent bridge compatibility check\nimport subprocess as _subprocess\nimport sys as _sys\n_subprocess.run([_sys.executable, "scripts/test_android_agent_bridge.py"], check=True)\n'''
+              p.write_text(text, encoding='utf-8')
+          PY
+
       - name: Keep patch helpers out of generated commit
         run: |
           git checkout HEAD -- scripts/apply-personal-health-agent.py
