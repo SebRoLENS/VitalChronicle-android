@@ -91,6 +91,7 @@ def main() -> None:
         calibration = json.loads(agent.calibrate(str(health), str(state), "Vorrei calibrare l'app sui miei dati"))
         assert calibration["available"] is True
         assert calibration["question_count"] >= 1
+        assert calibration["questions"][0]["context"]["calibration"] is True
         calibration_state = json.loads(agent.state(str(health), str(state)))
         assert calibration_state["calibration_pending"] is True
         assert calibration_state["calibration_remaining"] == calibration["question_count"]
