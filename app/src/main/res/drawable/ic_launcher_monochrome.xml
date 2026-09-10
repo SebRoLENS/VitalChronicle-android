@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Single-alpha themed icon for Android 13+ / Android 17 launchers. -->
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="7"
+        android:strokeLineCap="round"
+        android:pathData="M77,29 A32,32 0,1 0 80,75" />
+
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M84,31 A5,5 0,1 1 83.99,31 Z" />
+
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M54,34 A7,7 0,1 1 53.99,34 Z" />
+
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M54,78 C49,74 36,67 36,56 C36,48 45,44 54,52 C63,44 72,48 72,56 C72,67 59,74 54,78 Z" />
+
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M40,59 L48,59 L51,53 L56,66 L61,58 L68,58" />
+</vector>
