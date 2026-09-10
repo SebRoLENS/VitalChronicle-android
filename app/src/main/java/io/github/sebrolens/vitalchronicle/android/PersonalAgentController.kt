@@ -82,7 +82,7 @@ class PersonalAgentController(
             null
         }
 
-        return when (aiEngine) {
+        val result = when (aiEngine) {
             AiEngine.DETERMINISTIC -> null
             AiEngine.OLLAMA_LOCAL -> ollamaRun()
             AiEngine.GEMINI_NANO -> nanoRun()
@@ -92,6 +92,10 @@ class PersonalAgentController(
                 nanoRun() ?: ollamaRun()
             }
         }
+        if (result != null) {
+            runCatching { core.recordPersonalAgentExchange(agentDatabasePath, question, result.answer) }
+        }
+        return result
     }
 
     private suspend fun runAgentLoop(
