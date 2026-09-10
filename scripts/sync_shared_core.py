@@ -6,7 +6,7 @@ from pathlib import Path
 
 # __init__.py is platform-owned.  The desktop initializer installs desktop-only
 # patches and must never replace Android's minimal package bootstrap.
-CORE = ["analysis.py", "heart_rate_core.py", "ai_insights.py", "ai_pipeline.py", "ai_query_planner_core.py", "constants.py", "i18n.py", "utils.py"]
+CORE = ["analysis.py", "heart_rate_core.py", "ai_insights.py", "ai_pipeline.py", "ai_query_planner_core.py", "deterministic_detail_core.py", "agent_store.py", "agent_tools.py", "constants.py", "i18n.py", "utils.py"]
 
 def main():
     p=argparse.ArgumentParser(); p.add_argument("--source",required=True); p.add_argument("--dest",required=True); p.add_argument("--assets",required=True); a=p.parse_args()

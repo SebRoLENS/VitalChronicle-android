@@ -17,9 +17,9 @@ android {
         applicationId = "io.github.sebrolens.vitalchronicle.android"
         minSdk = 26
         targetSdk = 36
-        // 0.5.1 is an emergency rollback: behavior matches the last stable 0.4.1 release.
-        versionCode = 26
-        versionName = "0.5.1"
+        // 0.6.0 adds the local Personal Health Agent while preserving the safe planner fallback.
+        versionCode = 27
+        versionName = "0.6.0"
         ndk {
             abiFilters += listOf("arm64-v8a")
         }

@@ -121,6 +121,20 @@ class GeminiNanoEngine {
         }
     }
 
+    suspend fun personalAgentTurn(
+        systemPrompt: String,
+        prompt: String,
+        maximumTokens: Int,
+        progress: (String) -> Unit,
+    ): String {
+        val request = JSONObject()
+            .put("system", systemPrompt)
+            .put("prompt", prompt)
+            .put("max_output_tokens", maximumTokens.coerceIn(128, 768))
+            .toString()
+        return plan(request, progress)
+    }
+
     private suspend fun planWithModel(
         selection: ModelSelection,
         plannerRequestJson: String,

@@ -65,3 +65,9 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+# Personal Health Agent bridge compatibility check
+import subprocess as _subprocess
+import sys as _sys
+_subprocess.run([_sys.executable, "scripts/test_android_agent_bridge.py"], check=True)

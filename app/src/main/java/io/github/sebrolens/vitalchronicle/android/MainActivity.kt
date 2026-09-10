@@ -269,8 +269,21 @@ enum class Screen(val label: String, val icon: ImageVector) {
 @Composable fun AiScreen(vm: VitalViewModel) {
     var question by remember { mutableStateOf("What are the most meaningful patterns in my recent health data?") }
     var thinkingOpen by remember { mutableStateOf(true) }
+    var feedbackAnswer by remember { mutableStateOf("") }
     LazyColumn(Modifier.fillMaxSize(), contentPadding=PaddingValues(16.dp), verticalArrangement=Arrangement.spacedBy(12.dp)) {
         item { HeroCard("Private local AI", vm.aiModelName?.let{"Active local model · $it"}?:"Download an Ollama model or use Android's built-in Gemini Nano. Health evidence stays on this device.", Icons.Default.AutoAwesome) }
+        if (vm.personalAgentEnabled) item {
+            Card(colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.primaryContainer)) {
+                Row(Modifier.fillMaxWidth().padding(14.dp),verticalAlignment=Alignment.CenterVertically) {
+                    Icon(Icons.Default.Psychology,null,tint=MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Personal health agent",fontWeight=FontWeight.SemiBold)
+                        Text("${vm.agentBuiltInTools + vm.agentLearnedTools} safe local tools · ${vm.agentAssociationCount} learned associations",style=MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        }
         item { OutlinedTextField(question,{question=it},label={Text("Ask about your data")},modifier=Modifier.fillMaxWidth(),minLines=3,maxLines=7) }
         item {
             if (vm.busy) {
@@ -292,6 +305,25 @@ enum class Screen(val label: String, val icon: ImageVector) {
                     Text(vm.status,style=MaterialTheme.typography.bodySmall)
                 }
             } }
+        }
+        if (vm.personalAgentEnabled && vm.agentFeedbackQuestion != null) item {
+            Card(colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.secondaryContainer)) {
+                Column(Modifier.fillMaxWidth().padding(14.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                    Text("A question that can improve personalisation",fontWeight=FontWeight.SemiBold)
+                    Text(vm.agentFeedbackQuestion.orEmpty(),style=MaterialTheme.typography.bodyMedium)
+                    vm.agentFeedbackReason?.let { Text(it,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant) }
+                    OutlinedTextField(
+                        value=feedbackAnswer,
+                        onValueChange={feedbackAnswer=it},
+                        label={Text("Optional subjective context")},
+                        modifier=Modifier.fillMaxWidth(),
+                    )
+                    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                        Button(onClick={vm.answerPersonalAgentFeedback(feedbackAnswer);feedbackAnswer=""},enabled=feedbackAnswer.isNotBlank() && !vm.busy) { Text("Save locally") }
+                        TextButton(onClick={vm.skipPersonalAgentFeedback();feedbackAnswer=""},enabled=!vm.busy) { Text("Skip") }
+                    }
+                }
+            }
         }
         vm.analysisPlanSummary?.let { summary -> item {
             Card(colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.tertiaryContainer)) {
@@ -477,6 +509,22 @@ enum class Screen(val label: String, val icon: ImageVector) {
                 Text("Ollama downloads are SHA-256 verified. Gemini Nano availability is verified at runtime by ML Kit. Unsupported runtimes retain deterministic analysis.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             } }
         } } }
+        item { SectionTitle("Personal AI", "A bounded local agent can choose deterministic tools iteratively, learn safe reusable declarative tools and store optional feedback separately from your health archive.") }
+        item { SettingCard(Icons.Default.Psychology,"Personal health agent",if(vm.personalAgentEnabled) "Enabled · ${vm.agentBuiltInTools} built-in + ${vm.agentLearnedTools} learned tools" else "Disabled · the existing AI planner remains available") {
+            Switch(checked=vm.personalAgentEnabled,onCheckedChange=vm::setPersonalAgentEnabled)
+        } }
+        if (vm.personalAgentEnabled) item {
+            Card { Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(9.dp)) {
+                Text("Local personalisation",fontWeight=FontWeight.SemiBold)
+                Text("${vm.agentAssociationCount} learned associations · calibration ${if(vm.agentCalibrationVersion > 0) "complete" else "not run"}",style=MaterialTheme.typography.bodySmall)
+                Text("The health database is read-only to the agent. Learned tools are restricted to VitalChronicle's declarative allow-list; no shell, browser, arbitrary code or cloud AI access is exposed.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                    Button(onClick=vm::runPersonalAgentCalibration,enabled=!vm.busy && vm.counts.isNotEmpty()) { Text(if(vm.agentCalibrationVersion > 0) "Recalibrate" else "Calibrate") }
+                    OutlinedButton(onClick=vm::resetPersonalAgent,enabled=!vm.busy) { Text("Reset Personal AI") }
+                }
+            } }
+        }
+
         item {
             SectionTitle(
                 "Application updates",
