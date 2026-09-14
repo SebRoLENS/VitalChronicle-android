@@ -59,6 +59,7 @@ class PersonalAgentController(
         val maxFactoryRepairs = bootstrap.optInt("max_factory_repairs", 3).coerceIn(1, 4)
         val maxRawSeriesProbes = bootstrap.optInt("max_raw_series_probes", 2).coerceIn(1, 4)
         val advertisedTools = jsonStrings(bootstrap.optJSONArray("tool_names"))
+        val activeMonitors = jsonStrings(bootstrap.optJSONArray("monitor_names"))
         var nanoAvailabilityFailure: Throwable? = null
 
         suspend fun ollamaRun(): PersonalAgentRunResult? {
@@ -76,6 +77,7 @@ class PersonalAgentController(
                     maxFactoryRepairs = maxFactoryRepairs,
                     maxRawSeriesProbes = maxRawSeriesProbes,
                     advertisedTools = advertisedTools,
+                    activeMonitors = activeMonitors,
                     onStage = onStage,
                 ) { prompt, tokens -> ollama.personalAgentTurn(prompt, tokens, onStage) }
             } catch (e: CancellationException) {
@@ -97,6 +99,7 @@ class PersonalAgentController(
                 maxFactoryRepairs = maxFactoryRepairs,
                 maxRawSeriesProbes = maxRawSeriesProbes,
                 advertisedTools = advertisedTools,
+                activeMonitors = activeMonitors,
                 onStage = onStage,
             ) { prompt, tokens -> nano.personalAgentTurn(system, prompt, tokens, onStage) }
         } catch (e: CancellationException) {
@@ -148,6 +151,7 @@ class PersonalAgentController(
         maxFactoryRepairs: Int,
         maxRawSeriesProbes: Int,
         advertisedTools: Set<String>,
+        activeMonitors: Set<String>,
         onStage: (String) -> Unit,
         turn: suspend (String, Int) -> String,
     ): PersonalAgentRunResult? {
@@ -162,6 +166,8 @@ class PersonalAgentController(
         var factoryGate = false
         var factoryToolName: String? = null
         var factoryToolExecuted = false
+        val knownMonitors = activeMonitors.toMutableSet()
+        var monitoringOutcome: JSONObject? = null
 
         repeat(maxSteps) { index ->
             onStage("Personal agent · step ${index + 1}/$maxSteps")
@@ -184,7 +190,11 @@ class PersonalAgentController(
                     } else {
                         val answer = action.optString("answer").trim()
                         if (answer.isBlank()) return null
-                        return PersonalAgentRunResult(answer, engineLabel, toolCount, used)
+                        val verified = verifiedPersistenceAnswer(
+                            answer, monitoringOutcome, knownMonitors,
+                            factoryResolved, factoryToolName, factoryToolExecuted,
+                        )
+                        return PersonalAgentRunResult(verified, engineLabel, toolCount, used)
                     }
                 }
 
@@ -289,6 +299,15 @@ class PersonalAgentController(
                             }
                         }
                     }
+                    if (name == "create_monitoring_rule") {
+                        val resultObject = runCatching { JSONObject(result) }.getOrNull()
+                        if (resultObject?.optString("status") in setOf("created", "updated")) {
+                            monitoringOutcome = resultObject
+                            resultObject?.optJSONObject("monitor")?.optString("name")
+                                ?.takeIf { it.isNotBlank() }?.let(knownMonitors::add)
+                            onStage("Personal AI · monitoring rule saved")
+                        }
+                    }
 
                     addEvidence(evidenceLedger, name, arguments, result)
                     if (factoryCandidate && !factoryResolved && factoryRepairs < maxFactoryRepairs && index + 1 >= FACTORY_GATE_AFTER_STEPS) {
@@ -320,7 +339,69 @@ class PersonalAgentController(
         val answer = action?.takeIf { it.optString("action") == "final" }
             ?.optString("answer")?.trim().orEmpty()
         if (answer.isBlank()) return null
-        return PersonalAgentRunResult(answer, engineLabel, toolCount, used)
+        val verified = verifiedPersistenceAnswer(
+            answer, monitoringOutcome, knownMonitors,
+            factoryResolved, factoryToolName, factoryToolExecuted,
+        )
+        return PersonalAgentRunResult(verified, engineLabel, toolCount, used)
+    }
+
+    private fun persistenceClaim(answer: String): String? {
+        val text = answer.lowercase()
+        if (Regex("(?:non|not|no)\\b[^.\\n]{0,40}(?:creat|salvat|attiv|registrat|impost)").containsMatchIn(text)) return null
+        val created = Regex("creat|salvat|attiv|registrat|impost")
+        val monitor = Regex("monitor\\w*|promemoria|check-in|reminder")
+        val tool = Regex("strumento|tool")
+        if (created.containsMatchIn(text) && monitor.containsMatchIn(text)) return "monitor"
+        if (created.containsMatchIn(text) && tool.containsMatchIn(text)) return "tool"
+        return null
+    }
+
+    private fun verifiedPersistenceAnswer(
+        answer: String,
+        monitoringOutcome: JSONObject?,
+        knownMonitors: Set<String>,
+        factoryResolved: Boolean,
+        factoryToolName: String?,
+        factoryToolExecuted: Boolean,
+    ): String {
+        val claim = persistenceClaim(answer) ?: return answer
+        val folded = answer.lowercase()
+        val italian = listOf(" il ", " lo ", " la ", " che ", " è ").any { " $folded ".contains(it) }
+        if (claim == "monitor") {
+            val status = monitoringOutcome?.optString("status")
+            if (status == "created" || status == "updated") {
+                val monitor = monitoringOutcome?.optJSONObject("monitor")
+                val name = monitor?.optString("name").orEmpty().ifBlank { "monitoraggio" }
+                val cadence = monitor?.optInt("cadence_days", 1) ?: 1
+                return if (italian) {
+                    "Monitoraggio `$name` salvato con cadenza di $cadence giorno/i. Registra le segnalazioni corrispondenti e propone domande nell'app quando VitalChronicle è aperto; non è un tool analitico né una notifica di sistema."
+                } else {
+                    "Monitoring rule `$name` was saved with a $cadence-day cadence. It records matching reports and queues questions while VitalChronicle is open; it is not an analysis tool or OS notification."
+                }
+            }
+            val existing = knownMonitors.firstOrNull { folded.contains(it.lowercase()) }
+            if (existing != null) {
+                return if (italian) {
+                    "Il monitoraggio `$existing` risulta già salvato e attivo. Propone domande nell'app quando VitalChronicle è aperto; non è un tool analitico né una notifica di sistema."
+                } else {
+                    "Monitoring rule `$existing` is already saved and active. It queues in-app questions while VitalChronicle is open; it is not an analysis tool or OS notification."
+                }
+            }
+        }
+        if (claim == "tool" && factoryResolved && !factoryToolName.isNullOrBlank()) {
+            val state = if (factoryToolExecuted) "eseguito" else "non eseguito"
+            return if (italian) {
+                "Tool analitico `$factoryToolName` verificato e salvato; risulta $state in questa analisi."
+            } else {
+                "Analysis tool `$factoryToolName` was verified and saved; it was ${if (factoryToolExecuted) "executed" else "not executed"} in this analysis."
+            }
+        }
+        return if (italian) {
+            "Nessun nuovo tool o monitoraggio è stato salvato: il runtime non ha confermato la creazione. Le osservazioni personali restano separate come self-report."
+        } else {
+            "No new tool or monitoring rule was saved because creation was not confirmed by the runtime. Personal observations remain separate self-reports."
+        }
     }
 
     private fun addEvidence(
@@ -441,7 +522,8 @@ class PersonalAgentController(
             "get_missing_data", "detect_outliers", "detect_trends",
         )
         private val MUTATING_AGENT_TOOLS = setOf(
-            "create_learned_tool", "ask_user_feedback", "record_user_feedback",
+            "create_learned_tool", "create_monitoring_rule", "record_monitoring_observation",
+            "ask_user_feedback", "record_user_feedback",
         )
     }
 }

@@ -6,6 +6,7 @@ health-analysis questions, so this path deliberately avoids generative AI.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from google_health_viewer.agent_store import AgentStore
@@ -41,7 +42,7 @@ _PRESENT_PATTERNS: dict[str, tuple[str, ...]] = {
     "fatigue": (
         "mi sento stanco", "mi sento stanca", "sono stanco", "sono stanca", "mi sento affaticato", "mi sento affaticata",
         "i feel tired", "i'm tired", "i am tired", "i feel fatigued", "ich bin müde", "estoy cansado", "estoy cansada",
-        "je suis fatigué", "je suis fatiguée",
+        "je suis fatigué", "je suis fatiguée", "meno stanco", "meno stanca", "less tired",
     ),
     "sleepiness": (
         "ho sonno", "mi sento assonnato", "mi sento assonnata", "i feel sleepy", "i'm sleepy", "i am sleepy",
@@ -94,6 +95,19 @@ _STRONG_LANGUAGE_MARKERS = {
 
 def _normalise(text: str) -> str:
     return " ".join(text.strip().casefold().replace("’", "'").split())
+
+
+def _personal_observation(text: str) -> str:
+    operational = (
+        "vorrei monitor", "voglio monitor", "ricordami", "ricordamelo",
+        "tracciare questi dati", "i want to monitor", "remind me", "track this",
+    )
+    sentences = re.split(r"(?<=[.!?])\s+|[\r\n]+", text.strip())
+    kept = [
+        item.strip() for item in sentences
+        if item.strip() and not any(marker in item.casefold() for marker in operational)
+    ]
+    return " ".join(kept).strip() or text.strip()
 
 
 def _detect(text: str) -> dict[str, str] | None:
@@ -264,7 +278,7 @@ def route(agent_path: str, text: str) -> str:
     state = detected["state"]
     store = AgentStore(Path(agent_path))
     report = store.record_self_report(
-        statement,
+        _personal_observation(statement),
         category=category,
         thread_id="android-local",
         context={

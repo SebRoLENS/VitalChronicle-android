@@ -46,6 +46,16 @@ private data class AgentReportRow(
     val followUp: String,
 )
 
+private data class AgentMonitorRow(
+    val name: String,
+    val title: String,
+    val question: String,
+    val cadenceDays: Int,
+    val observations: Int,
+    val lastObserved: String,
+    val detail: String,
+)
+
 private data class AgentEventRow(val whenText: String, val message: String)
 private data class AgentConversationRow(val role: String, val content: String)
 
@@ -58,6 +68,7 @@ private data class AgentAdminState(
     val calibrationPending: Boolean = false,
     val calibrationRemaining: Int = 0,
     val tools: List<AgentToolRow> = emptyList(),
+    val monitors: List<AgentMonitorRow> = emptyList(),
     val userModel: List<AgentAssociationRow> = emptyList(),
     val reports: List<AgentReportRow> = emptyList(),
     val events: List<AgentEventRow> = emptyList(),
@@ -74,6 +85,7 @@ fun PersonalAiAdminPanel(vm: VitalViewModel) {
     var working by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var toolsOpen by remember { mutableStateOf(false) }
+    var monitorsOpen by remember { mutableStateOf(false) }
     var modelOpen by remember { mutableStateOf(false) }
     var reportsOpen by remember { mutableStateOf(false) }
     var activityOpen by remember { mutableStateOf(false) }
@@ -117,7 +129,7 @@ fun PersonalAiAdminPanel(vm: VitalViewModel) {
                 Column(Modifier.weight(1f)) {
                     Text("Personal AI details", fontWeight = FontWeight.SemiBold)
                     Text(
-                        state?.let { "${it.builtIns} built-in · ${it.learned} learned · ${it.associations} personal associations" }
+                        state?.let { "${it.builtIns} built-in · ${it.learned} learned · ${it.monitors.size} monitoring · ${it.associations} personal associations" }
                             ?: "Reading local agent state…",
                         style = MaterialTheme.typography.bodySmall,
                     )
@@ -167,6 +179,40 @@ fun PersonalAiAdminPanel(vm: VitalViewModel) {
                                     if (tool.description.isNotBlank()) Text(tool.description, style = MaterialTheme.typography.bodySmall)
                                     if (tool.replacement.isNotBlank()) Text("Replacement: ${tool.replacement}", style = MaterialTheme.typography.labelSmall)
                                     ToolDetailExpander(tool.detail)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                HorizontalDivider()
+                AdminSectionHeader(
+                    title = "Monitoring",
+                    subtitle = "${current.monitors.size} recurring in-app check-in(s) · separate from learned tools",
+                    open = monitorsOpen,
+                    onClick = { monitorsOpen = !monitorsOpen },
+                )
+                AnimatedVisibility(monitorsOpen) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (current.monitors.isEmpty()) {
+                            Text("No recurring monitoring rules have been saved.", style = MaterialTheme.typography.bodySmall)
+                        }
+                        current.monitors.forEach { monitor ->
+                            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                                Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Column(Modifier.weight(1f)) {
+                                            Text(monitor.title.ifBlank { monitor.name }, fontWeight = FontWeight.SemiBold)
+                                            Text("Every ${monitor.cadenceDays} day(s) · ${monitor.observations} observation(s)", style = MaterialTheme.typography.labelSmall)
+                                        }
+                                        TextButton(
+                                            onClick = { mutate { deleteMonitor(monitor.name) } },
+                                            enabled = !working && !vm.busy,
+                                        ) { Text("Delete") }
+                                    }
+                                    Text(monitor.question, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                                    if (monitor.lastObserved.isNotBlank()) Text("Last observation: ${monitor.lastObserved}", style = MaterialTheme.typography.labelSmall)
+                                    ToolDetailExpander(monitor.detail, label = "Monitoring details")
                                 }
                             }
                         }
@@ -314,6 +360,12 @@ private class PersonalAiAdminRepository(context: Context) {
         Unit
     }
 
+    suspend fun deleteMonitor(name: String) = withContext(Dispatchers.Default) {
+        val databasePath = withContext(Dispatchers.IO) { database.readableDatabase.path }
+        core.deletePersonalAgentMonitoringRule(databasePath, agentPath, name)
+        Unit
+    }
+
     suspend fun forgetAssociation(key: String) = withContext(Dispatchers.Default) {
         val databasePath = withContext(Dispatchers.IO) { database.readableDatabase.path }
         core.forgetPersonalAgentAssociation(databasePath, agentPath, key)
@@ -352,6 +404,23 @@ private class PersonalAiAdminRepository(context: Context) {
                     append("Dependencies: ${item.opt("dependencies")}\n")
                     append("Pipeline: ${item.opt("pipeline")}\n")
                     append("Updated: ${item.optString("updated_at")}")
+                },
+            )
+        },
+        monitors = root.optJSONArray("monitoring_rules").objects().map { item ->
+            AgentMonitorRow(
+                name = item.optString("name"),
+                title = item.optString("title"),
+                question = item.optString("question"),
+                cadenceDays = item.optInt("cadence_days", 1),
+                observations = item.optInt("observation_count"),
+                lastObserved = item.optString("last_observed_at").replace("T", " ").take(16),
+                detail = buildString {
+                    append("Name: ${item.optString("name")}\n")
+                    append("Keywords: ${item.opt("keywords")}\n")
+                    append("Fields: ${item.opt("fields")}\n")
+                    append("Last prompted: ${item.optString("last_prompted_at")}\n")
+                    append("Description: ${item.optString("description")}")
                 },
             )
         },

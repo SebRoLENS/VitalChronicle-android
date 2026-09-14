@@ -53,16 +53,17 @@ _SELF_REPORT_PATTERNS = {
 }
 
 AGENT_SYSTEM_PROMPT = """You are VitalChronicle's read-only local health agent.
-Use listed deterministic tools; check coverage and treat missing as unavailable, not zero. Preserve units and date semantics (sleep=wake/session-end date; today may be partial).
-Reuse exact tools. Create a declarative learned tool only for reusable composed/baseline/lag/recovery gaps; no code, shell, filesystem, browser, network, or writes. Repair from DSL errors and execute it before answering. Never substitute metrics.
-Use only relevant current personal context; reports are subjective and durable context needs confirmation. Separate evidence from explanations; correlation is not causation. Never diagnose or change treatment.
-Use the fewest calls and answer result-first without scratchpad.
+Use deterministic tools; missing is unavailable, not zero. Preserve units and date semantics (sleep=wake date; today may be partial).
+Reuse exact tools. Create a declarative tool only for reusable composed/baseline/lag/recovery gaps; no code, shell, filesystem, browser, network, or writes. Repair DSL errors and execute before answering. Never substitute metrics.
+Use relevant current personal context; reports are subjective and durable context needs confirmation. Correlation is not causation. Never diagnose or change treatment.
+Use create_monitoring_rule for recurring in-app check-ins, never as a learned tool, background listener, or system notification.
+Use few calls; answer result-first without scratchpad.
 
 Return exactly one JSON object:
 {"action":"tool","name":"tool_name","arguments":{...}}
 or
 {"action":"final","answer":"clear user-facing answer"}
-Use the minimum useful tools. Never output scratchpad prose."""
+Never output scratchpad prose."""
 
 
 class AndroidAgentHealthStore(SQLiteStore):
@@ -92,8 +93,44 @@ def _ensure_android_tables(path: str) -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_android_agent_messages
                 ON android_agent_messages(message_id);
+            CREATE TABLE IF NOT EXISTS monitoring_rules(
+                monitor_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                question TEXT NOT NULL,
+                cadence_days INTEGER NOT NULL DEFAULT 1,
+                keywords_json TEXT NOT NULL DEFAULT '[]',
+                fields_json TEXT NOT NULL DEFAULT '[]',
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                last_prompted_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS monitoring_observations(
+                observation_id TEXT PRIMARY KEY,
+                monitor_id TEXT NOT NULL,
+                statement TEXT NOT NULL,
+                observed_at TEXT NOT NULL,
+                context_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_monitoring_observations
+                ON monitoring_observations(monitor_id, observed_at, created_at);
             """
         )
+        has_self_reports = db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='self_reports'"
+        ).fetchone()
+        if has_self_reports:
+            rows = db.execute("SELECT report_id,statement FROM self_reports").fetchall()
+            for report_id, statement in rows:
+                normalized = _normalise_self_report(str(statement or ""))
+                if normalized and normalized != statement:
+                    db.execute(
+                        "UPDATE self_reports SET statement=?,updated_at=? WHERE report_id=?",
+                        (normalized, _now(), report_id),
+                    )
         db.commit()
     finally:
         db.close()
@@ -196,6 +233,8 @@ def _tool_subset(
         "get_daily_summary", "get_baseline", "get_missing_data",
         "search_tool_registry", "create_learned_tool", "ask_user_feedback",
     }
+    if any(marker in text for marker in ("monitor", "ricord", "segnal", "promemoria", "track", "remind", "check-in")):
+        controls.update({"create_monitoring_rule", "record_monitoring_observation", "list_monitoring_rules"})
     domain_terms = {
         "sleep": ("sleep", "sonno", "notte", "dorm", "rem", "profondo", "risvegl"),
         "training": ("training", "allen", "attiv", "activ", "cardio", "bici", "cicl", "workout", "zona attiva"),
@@ -298,8 +337,158 @@ def _detect_self_report(question: str) -> dict[str, str] | None:
     folded = question.strip().casefold()
     for category, markers in _SELF_REPORT_PATTERNS.items():
         if any(marker in folded for marker in markers):
-            return {"category": category, "statement": question.strip()}
+            return {"category": category, "statement": _normalise_self_report(question)}
     return None
+
+
+def _normalise_self_report(statement: str) -> str:
+    operational = (
+        "vorrei monitor", "voglio monitor", "ricordami", "ricordamelo",
+        "tracciare questi dati", "i want to monitor", "remind me", "track this",
+    )
+    sentences = re.split(r"(?<=[.!?])\s+|[\r\n]+", statement.strip())
+    kept = [
+        item.strip() for item in sentences
+        if item.strip() and not any(marker in item.casefold() for marker in operational)
+    ]
+    return " ".join(kept).strip() or statement.strip()
+
+
+def _monitoring_schemas() -> list[dict[str, Any]]:
+    def schema(name: str, description: str, properties: dict[str, Any], required=()) -> dict[str, Any]:
+        return {"type": "function", "function": {"name": name, "description": description, "parameters": {"type": "object", "properties": properties, "required": list(required), "additionalProperties": False}}}
+    return [
+        schema(
+            "create_monitoring_rule",
+            "Create or update a recurring in-app personal check-in; not a learned tool or system notification.",
+            {
+                "name": {"type": "string"}, "title": {"type": "string"},
+                "description": {"type": "string"}, "question": {"type": "string"},
+                "cadence_days": {"type": "integer", "minimum": 1, "maximum": 30},
+                "keywords": {"type": "array", "items": {"type": "string"}},
+                "fields": {"type": "array", "items": {"type": "string"}},
+            },
+            ("name", "title", "question", "cadence_days", "keywords"),
+        ),
+        schema("record_monitoring_observation", "Record a dated observation for an existing monitoring rule.", {"name": {"type": "string"}, "statement": {"type": "string"}, "observed_at": {"type": "string"}, "context": {"type": "object"}}, ("name", "statement")),
+        schema("list_monitoring_rules", "List active recurring in-app monitoring rules.", {}),
+    ]
+
+
+def _list_monitoring_rules(agent_path: str) -> list[dict[str, Any]]:
+    _ensure_android_tables(agent_path)
+    db = sqlite3.connect(agent_path, timeout=10.0)
+    db.row_factory = sqlite3.Row
+    try:
+        rows = db.execute(
+            "SELECT r.*,COUNT(o.observation_id) observation_count,MAX(o.observed_at) last_observed_at "
+            "FROM monitoring_rules r LEFT JOIN monitoring_observations o ON o.monitor_id=r.monitor_id "
+            "WHERE r.status='active' GROUP BY r.monitor_id ORDER BY r.name"
+        ).fetchall()
+    finally:
+        db.close()
+    return [{
+        "monitor_id": row["monitor_id"], "name": row["name"], "title": row["title"],
+        "description": row["description"], "question": row["question"],
+        "cadence_days": int(row["cadence_days"]),
+        "keywords": json.loads(row["keywords_json"] or "[]"),
+        "fields": json.loads(row["fields_json"] or "[]"), "status": row["status"],
+        "created_at": row["created_at"], "updated_at": row["updated_at"],
+        "last_prompted_at": row["last_prompted_at"],
+        "observation_count": int(row["observation_count"] or 0),
+        "last_observed_at": row["last_observed_at"],
+    } for row in rows]
+
+
+def _create_monitoring_rule(agent_path: str, arguments: dict[str, Any], store: AgentStore) -> dict[str, Any]:
+    import uuid
+    name = str(arguments.get("name") or "").strip().lower()
+    if not re.fullmatch(r"[a-z][a-z0-9_]{2,63}", name):
+        return {"status": "invalid_spec", "error": "Monitoring-rule name must be snake_case"}
+    question = str(arguments.get("question") or "").strip()
+    if not question:
+        return {"status": "invalid_spec", "error": "Monitoring rules require a question"}
+    now = _now()
+    existing = next((item for item in _list_monitoring_rules(agent_path) if item["name"] == name), None)
+    monitor_id = existing["monitor_id"] if existing else str(uuid.uuid4())
+    keywords = [str(item).strip().casefold()[:80] for item in arguments.get("keywords", []) if str(item).strip()][:12]
+    fields = [str(item).strip()[:80] for item in arguments.get("fields", []) if str(item).strip()][:8]
+    cadence = max(1, min(30, int(arguments.get("cadence_days") or 1)))
+    db = sqlite3.connect(agent_path, timeout=30.0)
+    try:
+        db.execute(
+            "INSERT INTO monitoring_rules VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(name) DO UPDATE SET "
+            "title=excluded.title,description=excluded.description,question=excluded.question,cadence_days=excluded.cadence_days,keywords_json=excluded.keywords_json,fields_json=excluded.fields_json,status='active',updated_at=excluded.updated_at",
+            (monitor_id, name, str(arguments.get("title") or name)[:160], str(arguments.get("description") or "")[:1000], question[:1000], cadence, json.dumps(keywords, ensure_ascii=False), json.dumps(fields, ensure_ascii=False), "active", existing["created_at"] if existing else now, now, existing["last_prompted_at"] if existing else now),
+        )
+        db.commit()
+    finally:
+        db.close()
+    status = "updated" if existing else "created"
+    store.log_tool_event(f"monitoring_rule_{status}", f"Monitoring rule {name} {status}.")
+    monitor = next(item for item in _list_monitoring_rules(agent_path) if item["name"] == name)
+    return {"status": status, "monitor": monitor}
+
+
+def _record_monitoring_observation(agent_path: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    import uuid
+    name = str(arguments.get("name") or "").strip()
+    statement = str(arguments.get("statement") or "").strip()
+    monitor = next((item for item in _list_monitoring_rules(agent_path) if item["name"] == name), None)
+    if not monitor or not statement:
+        return {"stored": False, "error": "Unknown monitor or empty observation"}
+    now = _now()
+    observation_id = str(uuid.uuid4())
+    db = sqlite3.connect(agent_path, timeout=30.0)
+    try:
+        duplicate = db.execute("SELECT observation_id FROM monitoring_observations WHERE monitor_id=? AND statement=? AND created_at>=? LIMIT 1", (monitor["monitor_id"], statement, (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat())).fetchone()
+        if duplicate:
+            observation_id = str(duplicate[0])
+        else:
+            db.execute("INSERT INTO monitoring_observations VALUES(?,?,?,?,?,?)", (observation_id, monitor["monitor_id"], statement[:4000], str(arguments.get("observed_at") or now), json.dumps(arguments.get("context") or {}, ensure_ascii=False), now))
+            db.commit()
+    finally:
+        db.close()
+    return {"stored": True, "observation_id": observation_id, "monitor_name": name}
+
+
+def _capture_monitoring(agent_path: str, statement: str) -> list[dict[str, Any]]:
+    folded = statement.casefold()
+    return [
+        _record_monitoring_observation(agent_path, {"name": item["name"], "statement": statement, "context": {"source": "conversation_keyword_match"}})
+        for item in _list_monitoring_rules(agent_path)
+        if item["keywords"] and any(str(keyword).casefold() in folded for keyword in item["keywords"])
+    ]
+
+
+def _queue_due_monitoring(store: AgentStore, agent_path: str) -> None:
+    now = datetime.now(timezone.utc)
+    for monitor in _list_monitoring_rules(agent_path):
+        try:
+            last_prompted = datetime.fromisoformat(str(monitor["last_prompted_at"])) if monitor["last_prompted_at"] else None
+            last_observed = datetime.fromisoformat(str(monitor["last_observed_at"])) if monitor["last_observed_at"] else None
+        except ValueError:
+            last_prompted = last_observed = None
+        if last_observed and (not last_prompted or last_observed > last_prompted):
+            db = sqlite3.connect(agent_path, timeout=30.0)
+            try:
+                db.execute("UPDATE monitoring_rules SET last_prompted_at=?,updated_at=? WHERE monitor_id=?", (now.isoformat(), now.isoformat(), monitor["monitor_id"]))
+                db.commit()
+            finally:
+                db.close()
+            due = False
+        else:
+            due = not last_prompted or now >= last_prompted + timedelta(days=monitor["cadence_days"])
+        if not due:
+            continue
+        store.ask_feedback(monitor["question"], thread_id=THREAD_ID, reason=f"Scheduled in-app check-in for {monitor['title']}", learning_key=f"monitoring:{monitor['name']}", context={"feedback_mode": "monitoring_observation", "monitor_name": monitor["name"], "fields": monitor["fields"]})
+        db = sqlite3.connect(agent_path, timeout=30.0)
+        try:
+            db.execute("UPDATE monitoring_rules SET last_prompted_at=?,updated_at=? WHERE monitor_id=?", (now.isoformat(), now.isoformat(), monitor["monitor_id"]))
+            db.commit()
+        finally:
+            db.close()
+        break
 
 
 _DURABLE_CONTEXT_MARKERS = {
@@ -404,6 +593,8 @@ def bootstrap(database_path: str, agent_path: str, question: str) -> str:
     store = _agent_store(agent_path)
     try:
         executor = EnhancedSafeToolExecutor(health, store)
+        captured_monitoring = _capture_monitoring(agent_path, question)
+        _queue_due_monitoring(store, agent_path)
         personal, reports = _relevant_personal_evidence(question, store)
         self_report = _detect_self_report(question)
         if self_report:
@@ -464,9 +655,10 @@ def bootstrap(database_path: str, agent_path: str, question: str) -> str:
             for item in (registry_preflight or {}).get("matches", [])
             if isinstance(item, dict) and item.get("name")
         }
-        schemas = _tool_subset(
-            executor.tool_schemas(), question, required_names=preferred_tools
-        )
+        all_schemas = executor.tool_schemas()
+        existing_names = {str((item.get("function") or {}).get("name") or "") for item in all_schemas}
+        all_schemas.extend(item for item in _monitoring_schemas() if str((item.get("function") or {}).get("name") or "") not in existing_names)
+        schemas = _tool_subset(all_schemas, question, required_names=preferred_tools)
 
         context = {
             "local_date": date.today().isoformat(),
@@ -475,6 +667,8 @@ def bootstrap(database_path: str, agent_path: str, question: str) -> str:
             "recent_conversation": _conversation_history(agent_path),
             "relevant_personal_context": personal,
             "relevant_self_reports": reports,
+            "active_monitoring_rules": _list_monitoring_rules(agent_path)[:8],
+            "captured_monitoring_observations": captured_monitoring,
             "tool_factory_hint": hint,
             "registry_preflight": _bounded(registry_preflight),
             "retention": "Android local archive only; omitted dates are unavailable",
@@ -503,6 +697,7 @@ def bootstrap(database_path: str, agent_path: str, question: str) -> str:
                 "factory_capability": hint["capability"],
                 "tool_count": len(schemas),
                 "tool_names": names,
+                "monitor_names": [item["name"] for item in _list_monitoring_rules(agent_path)],
                 "history_count": len(context["recent_conversation"]),
             },
             ensure_ascii=False, separators=(",", ":"),
@@ -522,7 +717,17 @@ def execute_tool(database_path: str, agent_path: str, name: str, arguments_json:
             arguments = {}
         if not isinstance(arguments, dict):
             arguments = {}
-        result = executor.execute(str(name), arguments, thread_id=THREAD_ID)
+        tool_name = str(name)
+        if tool_name == "create_monitoring_rule":
+            result = _create_monitoring_rule(agent_path, arguments, store)
+        elif tool_name == "record_monitoring_observation":
+            result = _record_monitoring_observation(agent_path, arguments)
+        elif tool_name == "list_monitoring_rules":
+            result = {"monitoring_rules": _list_monitoring_rules(agent_path)}
+        else:
+            if tool_name == "record_self_report":
+                arguments["statement"] = _normalise_self_report(str(arguments.get("statement") or ""))
+            result = executor.execute(tool_name, arguments, thread_id=THREAD_ID)
         return json.dumps(_bounded(result), ensure_ascii=False, separators=(",", ":"), default=str)
     finally:
         health.close()
@@ -573,7 +778,9 @@ def state(database_path: str, agent_path: str) -> str:
     try:
         EnhancedSafeToolExecutor(health, store)
         _maybe_complete_calibration(store, agent_path)
+        _queue_due_monitoring(store, agent_path)
         tools = store.list_tools(include_superseded=True)
+        monitors = _list_monitoring_rules(agent_path)
         model = store.user_model(include_expired=True)
         reports = store.recent_self_reports(days=90, limit=100)
         events = store.recent_tool_events(limit=80)
@@ -583,11 +790,13 @@ def state(database_path: str, agent_path: str) -> str:
                 "learned_tools": sum(1 for item in tools if item.get("kind") == "learned" and item.get("status") == "active"),
                 "superseded_tools": sum(1 for item in tools if item.get("status") == "superseded"),
                 "associations": len([item for item in model if item.get("is_current", True)]),
+                "monitoring_rules_count": len(monitors),
                 "calibration_version": store.calibration_version(),
                 "calibration_pending": _pending_calibration_count(agent_path) > 0,
                 "calibration_remaining": _pending_calibration_count(agent_path),
                 "pending_feedback": store.pending_feedback(THREAD_ID),
                 "tools": tools,
+                "monitoring_rules": monitors,
                 "user_model": model,
                 "self_reports": reports,
                 "recent_tool_events": events,
@@ -604,7 +813,20 @@ def answer_feedback(database_path: str, agent_path: str, feedback_id: str, answe
     store = _agent_store(agent_path)
     try:
         EnhancedSafeToolExecutor(health, store)
-        item = store.answer_feedback(feedback_id, answer)
+        pending = store.feedback(feedback_id)
+        context = pending.get("context") if isinstance(pending, dict) else {}
+        if isinstance(context, dict) and context.get("feedback_mode") == "monitoring_observation":
+            monitor_name = str(context.get("monitor_name") or "")
+            db = sqlite3.connect(agent_path, timeout=30.0)
+            try:
+                db.execute("UPDATE feedback SET answer=?,answered_at=? WHERE feedback_id=?", (answer.strip(), _now(), feedback_id))
+                db.commit()
+            finally:
+                db.close()
+            _record_monitoring_observation(agent_path, {"name": monitor_name, "statement": answer, "context": {"source": "scheduled_in_app_check_in", "feedback_id": feedback_id}})
+            item = store.feedback(feedback_id)
+        else:
+            item = store.answer_feedback(feedback_id, answer)
         _maybe_complete_calibration(store, agent_path)
         return json.dumps(item or {}, ensure_ascii=False, separators=(",", ":"), default=str)
     finally:
@@ -748,6 +970,21 @@ def delete_learned_tool(database_path: str, agent_path: str, name: str) -> str:
         health.close()
 
 
+def delete_monitoring_rule(database_path: str, agent_path: str, name: str) -> str:
+    del database_path
+    _ensure_android_tables(agent_path)
+    db = sqlite3.connect(agent_path, timeout=30.0)
+    try:
+        row = db.execute("SELECT monitor_id FROM monitoring_rules WHERE name=?", (name,)).fetchone()
+        if row:
+            db.execute("DELETE FROM monitoring_observations WHERE monitor_id=?", (row[0],))
+        cursor = db.execute("DELETE FROM monitoring_rules WHERE name=?", (name,))
+        db.commit()
+        return json.dumps({"deleted": bool(cursor.rowcount)})
+    finally:
+        db.close()
+
+
 def forget_user_model(database_path: str, agent_path: str, key: str) -> str:
     health = AndroidAgentHealthStore(database_path)
     store = _agent_store(agent_path)
@@ -764,6 +1001,12 @@ def reset_personalisation(database_path: str, agent_path: str) -> str:
     try:
         # Keep short-term chat history, matching desktop's separation between conversations and personalisation state.
         store.clear()
+        db = sqlite3.connect(agent_path, timeout=30.0)
+        try:
+            db.executescript("DELETE FROM monitoring_observations; DELETE FROM monitoring_rules;")
+            db.commit()
+        finally:
+            db.close()
         EnhancedSafeToolExecutor(health, store)
         return state(database_path, agent_path)
     finally:

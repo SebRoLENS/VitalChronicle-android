@@ -125,6 +125,44 @@ def main() -> None:
         assert complex_request["factory_candidate"] is True
         assert complex_request["factory_capability"].startswith("analysis.composed")
 
+        monitoring_state = root / "monitoring.sqlite3"
+        monitor_bootstrap = json.loads(agent.bootstrap(
+            str(health), str(monitoring_state),
+            "Ricordami di segnalare colazione ed energia dopo la palestra.",
+        ))
+        assert "create_monitoring_rule" in monitor_bootstrap["tool_names"]
+        created_monitor = json.loads(agent.execute_tool(
+            str(health), str(monitoring_state), "create_monitoring_rule",
+            json.dumps({
+                "name": "monitor_colazione_pre_palestra",
+                "title": "Colazione prima della palestra",
+                "question": "Hai fatto colazione e come ti sei sentito in palestra?",
+                "cadence_days": 1,
+                "keywords": ["colazione", "palestra"],
+                "fields": ["colazione", "sonno", "energia"],
+            }),
+        ))
+        assert created_monitor["status"] == "created"
+        monitored = json.loads(agent.state(str(health), str(monitoring_state)))
+        assert monitored["learned_tools"] == 0
+        assert monitored["monitoring_rules_count"] == 1
+        assert monitored["monitoring_rules"][0]["name"] == "monitor_colazione_pre_palestra"
+        observation_text = (
+            "Oggi ho fatto una colazione abbondante. Mi sentivo meno stanco in palestra. "
+            "Vorrei monitorare questa cosa anche in futuro."
+        )
+        agent.bootstrap(str(health), str(monitoring_state), observation_text)
+        monitored = json.loads(agent.state(str(health), str(monitoring_state)))
+        assert monitored["monitoring_rules"][0]["observation_count"] == 1
+        assert all(
+            "Vorrei monitorare" not in item["statement"]
+            for item in monitored["self_reports"]
+        )
+        agent.delete_monitoring_rule(
+            str(health), str(monitoring_state), "monitor_colazione_pre_palestra"
+        )
+        assert json.loads(agent.state(str(health), str(monitoring_state)))["monitoring_rules"] == []
+
         logged = json.loads(agent.log_factory_event(
             str(state), "tool_factory_repair", "invalid operation", "test_tool",
             '{"status":"invalid_pipeline","pipeline_ops":["invented"]}',
