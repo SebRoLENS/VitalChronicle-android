@@ -58,14 +58,14 @@ def main() -> None:
         bootstrap = json.loads(agent.bootstrap(str(health), str(state), "How active have I been?"))
         assert bootstrap["max_steps"] == 15
         assert bootstrap["max_factory_repairs"] == 3
-        assert bootstrap["tool_count"] <= 20
+        assert bootstrap["tool_count"] <= 14
         assert bootstrap["history_count"] == 0
         assert "get_data_coverage" in bootstrap["prompt"]
         assert "calculate_cardio_load" in bootstrap["prompt"]
         assert "get_sleep_stage_series" not in bootstrap["prompt"]
-        assert len(bootstrap["system"]) < 1600
+        assert len(bootstrap["system"]) < 1000
         assert "filesystem" in bootstrap["system"]
-        assert "Durable context requires explicit confirmation" in bootstrap["system"]
+        assert "durable context needs confirmation" in bootstrap["system"]
 
         memory_state = root / "durable_context.sqlite3"
         durable_question = (
@@ -90,7 +90,7 @@ def main() -> None:
         assert learned_context[0]["statement"] == (
             "Di solito mi alleno in bicicletta cinque giorni a settimana"
         )
-        assert durable_bootstrap["tool_count"] <= 20
+        assert durable_bootstrap["tool_count"] <= 14
 
         agent.record_exchange(str(state), "How active have I been?", "You recorded 5,000 steps in the available sample.")
         follow_up = json.loads(agent.bootstrap(str(health), str(state), "And compared with before?"))
@@ -107,10 +107,16 @@ def main() -> None:
         compact = json.loads(agent.bootstrap(
             str(health), str(dialogue_state), "And compared with before?"
         ))
-        assert compact["history_count"] == 6
+        assert compact["history_count"] == 4
         assert "long question 0" not in compact["prompt"]
         assert "long answer 7" in compact["prompt"]
         assert len(compact["prompt"]) < 14000
+
+        seventeen_days = [{"date": f"2026-09-{day:02d}", "value": day} for day in range(1, 18)]
+        compact_result = agent._bounded({"series": seventeen_days})
+        assert len(compact_result["series"]) == 17
+        long_result = agent._bounded({"series": list(range(100))})
+        assert any(isinstance(item, dict) and item.get("omitted_items") for item in long_result["series"])
 
         complex_request = json.loads(agent.bootstrap(
             str(health), str(state),
