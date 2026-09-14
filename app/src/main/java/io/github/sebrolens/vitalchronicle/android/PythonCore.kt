@@ -117,6 +117,14 @@ class PythonCore {
         "delete_learned_tool", databasePath, agentPath, name
     ).toString()
 
+    fun deletePersonalAgentMonitoringRule(
+        databasePath: String,
+        agentPath: String,
+        name: String,
+    ): String = agentModule.callAttr(
+        "delete_monitoring_rule", databasePath, agentPath, name
+    ).toString()
+
     fun forgetPersonalAgentAssociation(
         databasePath: String,
         agentPath: String,
