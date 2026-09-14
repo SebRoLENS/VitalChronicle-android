@@ -57,6 +57,9 @@ jobs:
       - name: Test shared AI-first query planner
         run: PYTHONPATH=app/src/main/python python scripts/test_ai_query_planner.py
 
+      - name: Test Android personal agent parity
+        run: PYTHONPATH=app/src/main/python python scripts/test_android_agent_bridge.py
+
       - name: Show upstream revision
         run: cat app/src/main/assets/shared_core_revision.json
 
@@ -150,6 +153,9 @@ jobs:
 
       - name: Test shared AI-first query planner
         run: PYTHONPATH=app/src/main/python python scripts/test_ai_query_planner.py
+
+      - name: Test Android personal agent parity
+        run: PYTHONPATH=app/src/main/python python scripts/test_android_agent_bridge.py
 
       - uses: gradle/actions/setup-gradle@v4
         with:

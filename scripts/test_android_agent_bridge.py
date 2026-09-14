@@ -58,13 +58,39 @@ def main() -> None:
         bootstrap = json.loads(agent.bootstrap(str(health), str(state), "How active have I been?"))
         assert bootstrap["max_steps"] == 15
         assert bootstrap["max_factory_repairs"] == 3
-        assert bootstrap["tool_count"] >= 40
+        assert bootstrap["tool_count"] <= 20
         assert bootstrap["history_count"] == 0
         assert "get_data_coverage" in bootstrap["prompt"]
-        assert "get_sleep_stage_series" in bootstrap["prompt"]
-        assert "Evidence, Reliability" in bootstrap["system"]
+        assert "calculate_cardio_load" in bootstrap["prompt"]
+        assert "get_sleep_stage_series" not in bootstrap["prompt"]
+        assert len(bootstrap["system"]) < 1600
         assert "filesystem" in bootstrap["system"]
-        assert "Recent conversation history is short-term dialogue context only" in bootstrap["system"]
+        assert "Durable context requires explicit confirmation" in bootstrap["system"]
+
+        memory_state = root / "durable_context.sqlite3"
+        durable_question = (
+            "Di solito mi alleno in bicicletta cinque giorni a settimana. "
+            "Considerando i dati disponibili, come dormo dopo l'attività intensa?"
+        )
+        durable_bootstrap = json.loads(agent.bootstrap(
+            str(health), str(memory_state), durable_question
+        ))
+        pending_context = json.loads(agent.state(str(health), str(memory_state)))["pending_feedback"]
+        assert pending_context["context"]["model_key"] == "training_routine_context"
+        assert pending_context["context"]["candidate_statement"] == (
+            "Di solito mi alleno in bicicletta cinque giorni a settimana"
+        )
+        assert "Considerando i dati" not in pending_context["context"]["candidate_statement"]
+        assert "Rispondi sì o no" in pending_context["question"]
+        agent.answer_feedback(
+            str(health), str(memory_state), pending_context["feedback_id"], "sì"
+        )
+        learned_context = json.loads(agent.state(str(health), str(memory_state)))["user_model"]
+        assert learned_context[0]["key"] == "training_routine_context"
+        assert learned_context[0]["statement"] == (
+            "Di solito mi alleno in bicicletta cinque giorni a settimana"
+        )
+        assert durable_bootstrap["tool_count"] <= 20
 
         agent.record_exchange(str(state), "How active have I been?", "You recorded 5,000 steps in the available sample.")
         follow_up = json.loads(agent.bootstrap(str(health), str(state), "And compared with before?"))
@@ -72,12 +98,34 @@ def main() -> None:
         assert "How active have I been?" in follow_up["prompt"]
         assert "5,000 steps" in follow_up["prompt"]
 
+        dialogue_state = root / "compact_dialogue.sqlite3"
+        for index in range(8):
+            agent.record_exchange(
+                str(dialogue_state), f"long question {index} " + "x" * 3000,
+                f"long answer {index} " + "y" * 3000,
+            )
+        compact = json.loads(agent.bootstrap(
+            str(health), str(dialogue_state), "And compared with before?"
+        ))
+        assert compact["history_count"] == 6
+        assert "long question 0" not in compact["prompt"]
+        assert "long answer 7" in compact["prompt"]
+        assert len(compact["prompt"]) < 14000
+
         complex_request = json.loads(agent.bootstrap(
             str(health), str(state),
             "How often do days 30% above my personal activity baseline affect the next day?",
         ))
         assert complex_request["factory_candidate"] is True
         assert complex_request["factory_capability"].startswith("analysis.composed")
+
+        logged = json.loads(agent.log_factory_event(
+            str(state), "tool_factory_repair", "invalid operation", "test_tool",
+            '{"status":"invalid_pipeline","pipeline_ops":["invented"]}',
+        ))
+        assert logged["logged"] is True
+        factory_events = json.loads(agent.state(str(health), str(state)))["recent_tool_events"]
+        assert any(item["event_type"] == "tool_factory_repair" for item in factory_events)
 
         available = json.loads(agent.execute_tool(str(health), str(state), "get_available_metrics", "{}"))
         assert available["count"] == 1
