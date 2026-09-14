@@ -15,12 +15,13 @@ from mobile_bridge import SQLiteStore
 MAX_AGENT_STEPS = 15
 MAX_FACTORY_REPAIR_ATTEMPTS = 3
 MAX_RAW_SERIES_PROBES_BEFORE_FACTORY = 2
-MAX_TOOL_RESULT_CHARS = 16000
+MAX_TOOL_RESULT_CHARS = 6500
 CALIBRATION_VERSION = 2
 THREAD_ID = "android-local"
-CONVERSATION_LIMIT = 6
-CONVERSATION_MESSAGE_CHARS = 1600
-MAX_ADVERTISED_TOOLS = 20
+CONVERSATION_LIMIT = 4
+CONVERSATION_MESSAGE_CHARS = 1000
+MAX_ADVERTISED_TOOLS = 14
+MAX_RESULT_LIST_ITEMS = 24
 
 _COMPREHENSIVE_MARKERS = (
     "analisi totale", "analisi completa", "analisi profonda", "tutta la cronologia",
@@ -51,14 +52,11 @@ _SELF_REPORT_PATTERNS = {
     "energy": ("mi sento energico", "mi sento energica", "pieno di energia", "piena di energia", "i feel energetic", "full of energy", "voller energie", "con mucha energía", "plein d'énergie", "pleine d'énergie"),
 }
 
-AGENT_SYSTEM_PROMPT = """You are VitalChronicle's local personal health agent. The health archive is read-only.
-- Use the listed deterministic tools for calculations and check coverage first. Missing/None is unavailable, never zero.
-- Reuse an exact tool or search the registry first. Create a declarative learned tool only for a reusable gap such as composed transforms, relative-baseline thresholds, lagged/event responses, or recovery time. Never use arbitrary code, shell, filesystem, browser, network, or health-data writes.
-- Repair invalid learned tools from the returned DSL reference; never substitute a proxy. Execute a created/reused tool before answering.
-- Use only relevant, current personal context. Label self-reports as subjective; one report is not a stable trait or proof of cause. Durable context requires explicit confirmation.
-- Separate measurements, calculations, reports, context, and explanations. Correlation is not causation. Never diagnose, change treatment, or present wearable data as medical clearance.
-- Respect local dates and tool date_semantics: sleep belongs to wake/session-end date; today may be partial.
-- Answer concisely and result-first. Mention only material coverage limits; omit method/tool logs unless asked.
+AGENT_SYSTEM_PROMPT = """You are VitalChronicle's read-only local health agent.
+Use listed deterministic tools; check coverage and treat missing as unavailable, not zero. Preserve units and date semantics (sleep=wake/session-end date; today may be partial).
+Reuse exact tools. Create a declarative learned tool only for reusable composed/baseline/lag/recovery gaps; no code, shell, filesystem, browser, network, or writes. Repair from DSL errors and execute it before answering. Never substitute metrics.
+Use only relevant current personal context; reports are subjective and durable context needs confirmation. Separate evidence from explanations; correlation is not causation. Never diagnose or change treatment.
+Use the fewest calls and answer result-first without scratchpad.
 
 Return exactly one JSON object:
 {"action":"tool","name":"tool_name","arguments":{...}}
@@ -196,9 +194,7 @@ def _tool_subset(
     controls = {
         "get_available_metrics", "get_data_coverage", "get_metric_series",
         "get_daily_summary", "get_baseline", "get_missing_data",
-        "search_tool_registry", "create_learned_tool", "get_user_model",
-        "ask_user_feedback", "record_self_report", "get_recent_self_reports",
-        "learn_user_association",
+        "search_tool_registry", "create_learned_tool", "ask_user_feedback",
     }
     domain_terms = {
         "sleep": ("sleep", "sonno", "notte", "dorm", "rem", "profondo", "risvegl"),
@@ -372,14 +368,34 @@ def _self_report_follow_up(category: str, language: str) -> tuple[str, str]:
     return table.get(category, table.get("energy", "Can you add one short detail about how you feel today?")), reason
 
 
+def _compact_result(value: Any, depth: int = 0) -> Any:
+    if depth >= 6:
+        return "[nested value omitted]"
+    if isinstance(value, dict):
+        return {str(key): _compact_result(item, depth + 1) for key, item in value.items()}
+    if isinstance(value, list):
+        if len(value) <= MAX_RESULT_LIST_ITEMS:
+            return [_compact_result(item, depth + 1) for item in value]
+        edge = MAX_RESULT_LIST_ITEMS // 2
+        return [
+            *[_compact_result(item, depth + 1) for item in value[:edge]],
+            {"omitted_items": len(value) - edge * 2},
+            *[_compact_result(item, depth + 1) for item in value[-edge:]],
+        ]
+    if isinstance(value, str) and len(value) > 1200:
+        return value[:1180].rstrip() + "… [bounded]"
+    return value
+
+
 def _bounded(value: Any) -> Any:
-    text = json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
+    compact = _compact_result(value)
+    text = json.dumps(compact, ensure_ascii=False, separators=(",", ":"), default=str)
     if len(text) <= MAX_TOOL_RESULT_CHARS:
-        return value
+        return compact
     return {
         "truncated": True,
         "preview": text[: MAX_TOOL_RESULT_CHARS - 280],
-        "notice": "Tool context was compacted; do not infer anything from omitted rows.",
+        "notice": "Compact evidence exceeded the step budget; omitted values are unknown.",
     }
 
 
@@ -460,7 +476,7 @@ def bootstrap(database_path: str, agent_path: str, question: str) -> str:
             "relevant_personal_context": personal,
             "relevant_self_reports": reports,
             "tool_factory_hint": hint,
-            "registry_preflight": registry_preflight,
+            "registry_preflight": _bounded(registry_preflight),
             "retention": "Android local archive only; omitted dates are unavailable",
         }
         if context_candidate and not self_report:

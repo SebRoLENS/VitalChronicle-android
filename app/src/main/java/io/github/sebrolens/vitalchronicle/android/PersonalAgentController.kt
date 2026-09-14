@@ -152,6 +152,7 @@ class PersonalAgentController(
         turn: suspend (String, Int) -> String,
     ): PersonalAgentRunResult? {
         var transcript = initialPrompt
+        val evidenceLedger = mutableListOf<String>()
         val used = mutableListOf<String>()
         val knownTools = advertisedTools.toMutableSet()
         val cache = mutableMapOf<String, String>()
@@ -169,18 +170,16 @@ class PersonalAgentController(
             when (action.optString("action")) {
                 "final" -> {
                     if (factoryGate && !factoryResolved) {
-                        transcript = appendTurn(
-                            transcript,
-                            action,
-                            "RUNTIME TOOL FACTORY GATE: the direct answer was rejected. Resolve the reusable capability gap first by calling create_learned_tool, or repair that same tool if validation failed. Capability: $factoryCapability",
+                        transcript = buildStepPrompt(
                             initialPrompt,
+                            evidenceLedger,
+                            "Resolve the reusable capability gap with create_learned_tool. Capability: $factoryCapability",
                         )
                     } else if (factoryToolName != null && !factoryToolExecuted) {
-                        transcript = appendTurn(
-                            transcript,
-                            action,
-                            "RUNTIME TOOL FACTORY: call ${factoryToolName} with the current inputs before answering.",
+                        transcript = buildStepPrompt(
                             initialPrompt,
+                            evidenceLedger,
+                            "Execute ${factoryToolName} with the current inputs before answering.",
                         )
                     } else {
                         val answer = action.optString("answer").trim()
@@ -195,21 +194,19 @@ class PersonalAgentController(
                     val arguments = action.optJSONObject("arguments") ?: JSONObject()
 
                     if (factoryGate && !factoryResolved && name != "create_learned_tool") {
-                        transcript = appendTurn(
-                            transcript,
-                            action,
-                            "RUNTIME TOOL FACTORY GATE: only create_learned_tool is allowed until the reusable capability gap is resolved. Do not probe another raw metric.",
+                        transcript = buildStepPrompt(
                             initialPrompt,
+                            evidenceLedger,
+                            "Only create_learned_tool is allowed now; do not probe another raw metric.",
                         )
                         return@repeat
                     }
 
                     if (name !in knownTools) {
-                        transcript = appendTurn(
-                            transcript,
-                            action,
-                            "RUNTIME TOOL ALLOW-LIST: '$name' is not an available safe tool. Use only advertised tools or a learned tool created in this session.",
+                        transcript = buildStepPrompt(
                             initialPrompt,
+                            evidenceLedger,
+                            "'$name' is unavailable. Use only advertised tools or a tool created in this session.",
                         )
                         return@repeat
                     }
@@ -293,10 +290,18 @@ class PersonalAgentController(
                         }
                     }
 
-                    transcript = appendTurn(transcript, action, "TOOL RESULT for $name:\n$result", initialPrompt)
+                    addEvidence(evidenceLedger, name, arguments, result)
                     if (factoryCandidate && !factoryResolved && factoryRepairs < maxFactoryRepairs && index + 1 >= FACTORY_GATE_AFTER_STEPS) {
                         factoryGate = true
                     }
+                    val nextDirective = when {
+                        factoryToolName != null && !factoryToolExecuted ->
+                            "Execute ${factoryToolName} with the current inputs before answering."
+                        factoryGate && !factoryResolved ->
+                            "Call create_learned_tool now to resolve capability $factoryCapability."
+                        else -> "Choose the next necessary action; do not repeat completed calls."
+                    }
+                    transcript = buildStepPrompt(initialPrompt, evidenceLedger, nextDirective)
                 }
 
                 else -> return null
@@ -304,11 +309,11 @@ class PersonalAgentController(
         }
 
         onStage("Personal agent · finalising from collected results…")
-        val finalPrompt = compactTranscript(
-            transcript + "\n\nFINAL ANSWER REQUIRED NOW. Do not call tools. Return exactly " +
-                "{\"action\":\"final\",\"answer\":\"...\"}. Answer the user's question first and concisely. " +
-                "Do not add Evidence/Reliability/Methods sections or narrate tool use. Mention only material values or limitations.",
+        val finalPrompt = buildStepPrompt(
             initialPrompt,
+            evidenceLedger,
+            "FINAL ANSWER NOW; no tools. Return {\"action\":\"final\",\"answer\":\"...\"}. " +
+                "Answer result-first; mention only material values and limitations, without narrating tool use.",
         )
         val raw = turn(finalPrompt, FINAL_OUTPUT_TOKENS)
         val action = parseAction(raw)
@@ -318,21 +323,54 @@ class PersonalAgentController(
         return PersonalAgentRunResult(answer, engineLabel, toolCount, used)
     }
 
-    private fun appendTurn(
-        transcript: String,
-        action: JSONObject,
+    private fun addEvidence(
+        ledger: MutableList<String>,
+        tool: String,
+        arguments: JSONObject,
         result: String,
-        initialPrompt: String,
-    ): String = compactTranscript(
-        transcript + "\n\nASSISTANT ACTION:\n$action\n\n$result\n\nChoose exactly one next action. JSON only.",
-        initialPrompt,
-    )
+    ) {
+        val resultValue = runCatching<Any> { JSONObject(result) }.getOrElse {
+            runCatching<Any> { JSONArray(result) }.getOrElse { result }
+        }
+        var entry = JSONObject()
+            .put("tool", tool)
+            .put("arguments", arguments)
+            .put("result", resultValue)
+            .toString()
+        if (entry.length > MAX_EVIDENCE_ENTRY_CHARS) {
+            entry = JSONObject()
+                .put("tool", tool)
+                .put("arguments", arguments)
+                .put("result_preview", result.take(MAX_EVIDENCE_ENTRY_CHARS - 700))
+                .put("bounded", true)
+                .toString()
+        }
+        ledger += entry
+        while (ledger.size > MAX_EVIDENCE_ENTRIES) ledger.removeAt(0)
+    }
 
-    private fun compactTranscript(transcript: String, initialPrompt: String): String {
-        if (transcript.length <= MAX_TRANSCRIPT_CHARS) return transcript
-        return initialPrompt.take(INITIAL_CONTEXT_CHARS) +
-            "\n\n[older agent turns compacted; latest deterministic results follow]\n\n" +
-            transcript.takeLast(RECENT_CONTEXT_CHARS)
+    private fun buildStepPrompt(
+        initialPrompt: String,
+        ledger: List<String>,
+        directive: String,
+    ): String {
+        val selected = mutableListOf<String>()
+        var usedChars = 0
+        for (entry in ledger.asReversed()) {
+            if (selected.isNotEmpty() && usedChars + entry.length > MAX_EVIDENCE_LEDGER_CHARS) break
+            selected.add(0, entry)
+            usedChars += entry.length
+        }
+        val omitted = ledger.size - selected.size
+        val evidence = if (selected.isEmpty()) "[]" else selected.joinToString(",", "[", "]")
+        return buildString {
+            append(initialPrompt)
+            append("\n\nDETERMINISTIC EVIDENCE LEDGER (compact; omitted values are unknown):\n")
+            append(evidence)
+            if (omitted > 0) append("\nOlder evidence entries omitted: ").append(omitted)
+            append("\n\nRUNTIME NEXT STEP:\n").append(directive)
+            append("\nReturn exactly one JSON action.")
+        }
     }
 
     private fun parseAction(raw: String): JSONObject? {
@@ -382,11 +420,11 @@ class PersonalAgentController(
     }
 
     companion object {
-        private const val ACTION_OUTPUT_TOKENS = 2048
-        private const val FINAL_OUTPUT_TOKENS = 3200
-        private const val MAX_TRANSCRIPT_CHARS = 28_000
-        private const val INITIAL_CONTEXT_CHARS = 10_000
-        private const val RECENT_CONTEXT_CHARS = 16_000
+        private const val ACTION_OUTPUT_TOKENS = 1400
+        private const val FINAL_OUTPUT_TOKENS = 2400
+        private const val MAX_EVIDENCE_ENTRIES = 8
+        private const val MAX_EVIDENCE_ENTRY_CHARS = 5_000
+        private const val MAX_EVIDENCE_LEDGER_CHARS = 18_000
         private const val FACTORY_GATE_AFTER_STEPS = 3
 
         private val NANO_AVAILABILITY_MARKERS = setOf(
