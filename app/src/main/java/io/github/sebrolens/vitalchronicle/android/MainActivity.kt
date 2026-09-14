@@ -310,13 +310,20 @@ enum class Screen(val label: String, val icon: ImageVector) {
         if (vm.personalAgentEnabled && vm.agentFeedbackQuestion != null) item {
             Card(colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.secondaryContainer)) {
                 Column(Modifier.fillMaxWidth().padding(14.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
-                    Text("A question that can improve personalisation",fontWeight=FontWeight.SemiBold)
+                    val confirmation = vm.agentFeedbackMode == "durable_context_confirmation"
+                    Text(
+                        if (confirmation) "Confirm personal context" else "Personalisation question",
+                        style=MaterialTheme.typography.titleMedium,
+                        fontWeight=FontWeight.Bold,
+                        color=MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
                     Text(vm.agentFeedbackQuestion.orEmpty(),style=MaterialTheme.typography.bodyMedium)
                     vm.agentFeedbackReason?.let { Text(it,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant) }
                     OutlinedTextField(
                         value=feedbackAnswer,
                         onValueChange={feedbackAnswer=it},
-                        label={Text("Optional subjective context")},
+                        label={Text(if (confirmation) "Answer yes or no" else "Your short answer")},
+                        placeholder={Text(if (confirmation) "Yes, remember it" else "Write the requested detail")},
                         modifier=Modifier.fillMaxWidth(),
                     )
                     Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {

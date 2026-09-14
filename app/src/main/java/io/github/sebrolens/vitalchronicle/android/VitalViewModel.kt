@@ -68,6 +68,7 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
     var agentFeedbackId by mutableStateOf<String?>(null); private set
     var agentFeedbackQuestion by mutableStateOf<String?>(null); private set
     var agentFeedbackReason by mutableStateOf<String?>(null); private set
+    var agentFeedbackMode by mutableStateOf<String?>(null); private set
     var lastError by mutableStateOf<String?>(null); private set
     var updateState by mutableStateOf<AppUpdateState>(AppUpdateState.Idle); private set
     var updatePromptDismissed by mutableStateOf(false); private set
@@ -407,6 +408,8 @@ class VitalViewModel(app: Application) : AndroidViewModel(app) {
                 agentFeedbackId = pending?.optString("feedback_id")?.takeIf { it.isNotBlank() }
                 agentFeedbackQuestion = pending?.optString("question")?.takeIf { it.isNotBlank() }
                 agentFeedbackReason = pending?.optString("reason")?.takeIf { it.isNotBlank() }
+                agentFeedbackMode = pending?.optJSONObject("context")
+                    ?.optString("feedback_mode")?.takeIf { it.isNotBlank() }
             }
         }
     }

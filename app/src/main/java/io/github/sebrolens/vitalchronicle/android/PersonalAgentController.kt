@@ -159,6 +159,8 @@ class PersonalAgentController(
         var rawSeriesProbes = 0
         var factoryResolved = false
         var factoryGate = false
+        var factoryToolName: String? = null
+        var factoryToolExecuted = false
 
         repeat(maxSteps) { index ->
             onStage("Personal agent · step ${index + 1}/$maxSteps")
@@ -171,6 +173,13 @@ class PersonalAgentController(
                             transcript,
                             action,
                             "RUNTIME TOOL FACTORY GATE: the direct answer was rejected. Resolve the reusable capability gap first by calling create_learned_tool, or repair that same tool if validation failed. Capability: $factoryCapability",
+                            initialPrompt,
+                        )
+                    } else if (factoryToolName != null && !factoryToolExecuted) {
+                        transcript = appendTurn(
+                            transcript,
+                            action,
+                            "RUNTIME TOOL FACTORY: call ${factoryToolName} with the current inputs before answering.",
                             initialPrompt,
                         )
                     } else {
@@ -240,12 +249,24 @@ class PersonalAgentController(
                             ).also { if (cacheable) cache[cacheKey] = it }
                         }
                     used += name
+                    if (name == factoryToolName) factoryToolExecuted = true
 
                     if (name == "create_learned_tool") {
                         val resultObject = runCatching { JSONObject(result) }.getOrNull()
                         when (resultObject?.optString("status")) {
                             "invalid_pipeline", "invalid_spec" -> {
                                 factoryRepairs += 1
+                                val error = resultObject.optString("error", "Learned-tool validation failed")
+                                onStage("Tool Factory · repair $factoryRepairs/$maxFactoryRepairs · $error")
+                                runCatching {
+                                    core.logPersonalAgentFactoryEvent(
+                                        agentDatabasePath,
+                                        "tool_factory_repair",
+                                        error,
+                                        arguments.optString("name"),
+                                        resultObject.toString(),
+                                    )
+                                }
                                 factoryGate = factoryRepairs < maxFactoryRepairs
                                 if (!factoryGate) {
                                     resultObject.put("repair_budget_exhausted", true)
@@ -255,9 +276,19 @@ class PersonalAgentController(
                             "created", "reused" -> {
                                 factoryResolved = true
                                 factoryGate = false
-                                resultObject.optJSONObject("tool")?.optString("name")
+                                factoryToolName = resultObject.optJSONObject("tool")?.optString("name")
                                     ?.takeIf { it.isNotBlank() }
-                                    ?.let(knownTools::add)
+                                factoryToolName?.let(knownTools::add)
+                            }
+                            else -> runCatching {
+                                core.logPersonalAgentFactoryEvent(
+                                    agentDatabasePath,
+                                    "tool_factory_failure",
+                                    resultObject?.optString("error", "Unexpected Tool Factory result")
+                                        ?: "Invalid Tool Factory result",
+                                    arguments.optString("name"),
+                                    result,
+                                )
                             }
                         }
                     }
@@ -353,9 +384,9 @@ class PersonalAgentController(
     companion object {
         private const val ACTION_OUTPUT_TOKENS = 2048
         private const val FINAL_OUTPUT_TOKENS = 3200
-        private const val MAX_TRANSCRIPT_CHARS = 42_000
-        private const val INITIAL_CONTEXT_CHARS = 16_000
-        private const val RECENT_CONTEXT_CHARS = 24_000
+        private const val MAX_TRANSCRIPT_CHARS = 28_000
+        private const val INITIAL_CONTEXT_CHARS = 10_000
+        private const val RECENT_CONTEXT_CHARS = 16_000
         private const val FACTORY_GATE_AFTER_STEPS = 3
 
         private val NANO_AVAILABILITY_MARKERS = setOf(

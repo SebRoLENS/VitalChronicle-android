@@ -17,9 +17,9 @@ android {
         applicationId = "io.github.sebrolens.vitalchronicle.android"
         minSdk = 26
         targetSdk = 36
-        // 0.7.1 fixes subjective self-report routing and local-AI availability fallback.
-        versionCode = 29
-        versionName = "0.7.1"
+        // 0.8.0 aligns Personal AI context, Tool Factory and prompt efficiency with desktop.
+        versionCode = 30
+        versionName = "0.8.0"
         ndk {
             abiFilters += listOf("arm64-v8a")
         }

@@ -67,6 +67,16 @@ class PythonCore {
         "execute_tool", databasePath, agentPath, name, argumentsJson
     ).toString()
 
+    fun logPersonalAgentFactoryEvent(
+        agentPath: String,
+        eventType: String,
+        message: String,
+        toolName: String,
+        payloadJson: String,
+    ): String = agentModule.callAttr(
+        "log_factory_event", agentPath, eventType, message, toolName, payloadJson
+    ).toString()
+
     fun recordPersonalAgentExchange(agentPath: String, question: String, answer: String): String =
         agentModule.callAttr("record_exchange", agentPath, question, answer).toString()
 
