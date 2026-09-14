@@ -17,9 +17,9 @@ android {
         applicationId = "io.github.sebrolens.vitalchronicle.android"
         minSdk = 26
         targetSdk = 36
-        // 0.8.0 aligns Personal AI context, Tool Factory and prompt efficiency with desktop.
-        versionCode = 30
-        versionName = "0.8.0"
+        // 0.8.1 publishes verified recurring personal monitoring.
+        versionCode = 31
+        versionName = "0.8.1"
         ndk {
             abiFilters += listOf("arm64-v8a")
         }
