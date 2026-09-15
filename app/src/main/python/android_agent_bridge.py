@@ -10,18 +10,22 @@ from typing import Any
 
 from google_health_viewer.agent_store import AgentStore, PERSONAL_CONTEXT_KEY_SPECS
 from google_health_viewer.agent_tool_factory import EnhancedSafeToolExecutor
+from google_health_viewer import agent_hard_query_reliability_patch as hard_query
+from google_health_viewer import agent_runtime_adaptive_patch as adaptive
+from google_health_viewer import agent_runtime_efficiency_patch as efficiency
+from google_health_viewer import agent_tool_factory_semantic_guard as semantic
 from mobile_bridge import SQLiteStore
 
 MAX_AGENT_STEPS = 15
 MAX_FACTORY_REPAIR_ATTEMPTS = 3
 MAX_RAW_SERIES_PROBES_BEFORE_FACTORY = 2
-MAX_TOOL_RESULT_CHARS = 6500
+MAX_TOOL_RESULT_CHARS = 5000
 CALIBRATION_VERSION = 2
 THREAD_ID = "android-local"
 CONVERSATION_LIMIT = 4
-CONVERSATION_MESSAGE_CHARS = 1000
-MAX_ADVERTISED_TOOLS = 14
-MAX_RESULT_LIST_ITEMS = 24
+CONVERSATION_MESSAGE_CHARS = 600
+MAX_ADVERTISED_TOOLS = 10
+MAX_RESULT_LIST_ITEMS = 10
 
 _COMPREHENSIVE_MARKERS = (
     "analisi totale", "analisi completa", "analisi profonda", "tutta la cronologia",
@@ -54,7 +58,7 @@ _SELF_REPORT_PATTERNS = {
 
 AGENT_SYSTEM_PROMPT = """You are VitalChronicle's read-only local health agent.
 Use deterministic tools; missing is unavailable, not zero. Preserve units and date semantics (sleep=wake date; today may be partial).
-Reuse exact tools. Create a declarative tool only for reusable composed/baseline/lag/recovery gaps; no code, shell, filesystem, browser, network, or writes. Repair DSL errors and execute before answering. Never substitute metrics.
+Reuse exact tools. Create a declarative tool only for reusable composed/baseline/lag/recovery gaps; keep its metadata in English. No code, shell, filesystem, browser, network, or writes. Repair DSL errors and execute before answering. Never substitute metrics.
 Use relevant current personal context; reports are subjective and durable context needs confirmation. Correlation is not causation. Never diagnose or change treatment.
 Use create_monitoring_rule for recurring in-app check-ins, never as a learned tool, background listener, or system notification.
 Use few calls; answer result-first without scratchpad.
@@ -326,11 +330,34 @@ def _factory_hint(question: str) -> dict[str, Any]:
         "threshold_frequency": ("%", "quanto spesso", "how often", "supera", "exceed", "diminuisce", "decrease"),
     }
     signals = [label for label, markers in groups.items() if any(marker in text for marker in markers)]
-    return {
+    hint = {
         "consider_reusable_tool": len(signals) >= 2,
         "signals": signals,
         "capability": "analysis.composed" + ("." + ".".join(signals) if signals else ""),
     }
+    hint = efficiency._supplement_factory_hint(question, hint)
+    requirements = semantic._semantic_requirements(question)
+    if semantic._is_training_context_comparison(requirements):
+        marker = "training-context recovery comparison"
+        if marker not in hint["signals"]:
+            hint["signals"].append(marker)
+        hint["consider_reusable_tool"] = True
+        hint["semantic_requirements"] = sorted(requirements)
+        hint["capability"] = semantic._COMPOSED_CONTEXT_CAPABILITY
+        hint["instruction"] = (
+            "Preserve consecutive-training versus after-rest semantics; do not replace the "
+            "request with a generic high-load recovery proxy."
+        )
+    if hard_query._is_sleep_conditioned_consecutive_recovery(question):
+        if hard_query._SLEEP_CONDITIONED_SIGNAL not in hint["signals"]:
+            hint["signals"].append(hard_query._SLEEP_CONDITIONED_SIGNAL)
+        hint["consider_reusable_tool"] = True
+        hint["capability"] = hard_query._SLEEP_CONDITIONED_COMPOSED_CAPABILITY
+        hint["instruction"] = (
+            "Preserve second-day training selection, following-night sleep cohorts, the personal "
+            "sleep baseline and every requested recovery metric."
+        )
+    return hint
 
 
 def _detect_self_report(question: str) -> dict[str, str] | None:
@@ -497,8 +524,10 @@ _DURABLE_CONTEXT_MARKERS = {
 }
 
 
-def _detect_durable_context_candidate(question: str) -> dict[str, Any] | None:
+def _detect_durable_context_candidates(question: str) -> list[dict[str, Any]]:
     sentences = re.split(r"(?<=[.!?])\s+|[\r\n]+|(?<=;)\s+", question.strip())
+    candidates: list[dict[str, Any]] = []
+    seen_keys: set[str] = set()
     for raw in sentences:
         sentence = re.sub(r"^[ \t\n.;]+|[ \t\n.;]+$", "", raw)
         if not sentence or sentence.endswith(("?", "？")):
@@ -512,15 +541,25 @@ def _detect_durable_context_candidate(question: str) -> dict[str, Any] | None:
         ]
         if matches:
             _, key = max(matches)
+            if key in seen_keys:
+                continue
             spec = PERSONAL_CONTEXT_KEY_SPECS.get(key, {})
             scope = str(spec.get("default_scope") or "stable")
-            return {
+            candidates.append({
                 "model_key": key,
                 "statement": sentence,
                 "temporal_scope": scope,
                 "ttl_days": spec.get("ttl_days") if scope == "temporary" else None,
-            }
-    return None
+            })
+            seen_keys.add(key)
+    return candidates
+
+
+def _detect_durable_context_candidate(question: str) -> dict[str, Any] | None:
+    """Compatibility helper for callers which expect only the first candidate."""
+
+    candidates = _detect_durable_context_candidates(question)
+    return candidates[0] if candidates else None
 
 
 def _language(text: str) -> str:
@@ -576,16 +615,11 @@ def _compact_result(value: Any, depth: int = 0) -> Any:
     return value
 
 
-def _bounded(value: Any) -> Any:
-    compact = _compact_result(value)
-    text = json.dumps(compact, ensure_ascii=False, separators=(",", ":"), default=str)
-    if len(text) <= MAX_TOOL_RESULT_CHARS:
-        return compact
-    return {
-        "truncated": True,
-        "preview": text[: MAX_TOOL_RESULT_CHARS - 280],
-        "notice": "Compact evidence exceeded the step budget; omitted values are unknown.",
-    }
+def _bounded(value: Any, limit: int = MAX_TOOL_RESULT_CHARS) -> Any:
+    """Return summary-first structured evidence without ever cutting JSON text."""
+
+    text = adaptive._smart_json_text(value, max(800, int(limit)))
+    return json.loads(text)
 
 
 def bootstrap(database_path: str, agent_path: str, question: str) -> str:
@@ -593,6 +627,7 @@ def bootstrap(database_path: str, agent_path: str, question: str) -> str:
     store = _agent_store(agent_path)
     try:
         executor = EnhancedSafeToolExecutor(health, store)
+        store.set_meta("android_factory_user_request", question.strip()[:12000])
         captured_monitoring = _capture_monitoring(agent_path, question)
         _queue_due_monitoring(store, agent_path)
         personal, reports = _relevant_personal_evidence(question, store)
@@ -611,10 +646,12 @@ def bootstrap(database_path: str, agent_path: str, question: str) -> str:
                 )
             personal, reports = _relevant_personal_evidence(question, store)
 
-        context_candidate = _detect_durable_context_candidate(question)
-        if context_candidate and not self_report:
-            feedback_key = f"personal_context:{context_candidate['model_key']}"
-            if not store.has_recent_feedback_key(feedback_key, days=30):
+        context_candidates = _detect_durable_context_candidates(question)
+        if context_candidates and not self_report:
+            for context_candidate in context_candidates:
+                feedback_key = f"personal_context:{context_candidate['model_key']}"
+                if store.has_recent_feedback_key(feedback_key, days=30):
+                    continue
                 italian = _language(question) == "it"
                 statement = context_candidate["statement"]
                 feedback_question = (
@@ -650,11 +687,23 @@ def bootstrap(database_path: str, agent_path: str, question: str) -> str:
                 {"capability": hint["capability"], "description": question.strip()},
                 thread_id=THREAD_ID,
             )
-        preferred_tools = {
-            str(item.get("name") or "")
-            for item in (registry_preflight or {}).get("matches", [])
-            if isinstance(item, dict) and item.get("name")
-        }
+        exact_match = adaptive._select_exact_match(
+            registry_preflight, str(hint.get("capability") or "")
+        )
+        if exact_match:
+            preferred_tools = {str(exact_match.get("name") or "")}
+        else:
+            preferred_tools = {
+                str(item.get("name") or "")
+                for item in (registry_preflight or {}).get("matches", [])[:3]
+                if isinstance(item, dict) and item.get("name")
+            }
+        preferred_tools.update(efficiency._required_composite_tools(question))
+        requirements = semantic._semantic_requirements(question)
+        if semantic._is_training_context_comparison(requirements):
+            preferred_tools.add(semantic._CONTEXT_RECOVERY_NAME)
+        if hard_query._is_sleep_conditioned_consecutive_recovery(question):
+            preferred_tools.add(hard_query._SLEEP_CONDITIONED_NAME)
         all_schemas = executor.tool_schemas()
         existing_names = {str((item.get("function") or {}).get("name") or "") for item in all_schemas}
         all_schemas.extend(item for item in _monitoring_schemas() if str((item.get("function") or {}).get("name") or "") not in existing_names)
@@ -670,14 +719,14 @@ def bootstrap(database_path: str, agent_path: str, question: str) -> str:
             "active_monitoring_rules": _list_monitoring_rules(agent_path)[:8],
             "captured_monitoring_observations": captured_monitoring,
             "tool_factory_hint": hint,
-            "registry_preflight": _bounded(registry_preflight),
+            "registry_preflight": _bounded(registry_preflight, 3200),
             "retention": "Android local archive only; omitted dates are unavailable",
         }
-        if context_candidate and not self_report:
-            context["personal_context_candidate"] = {
-                "statement": context_candidate["statement"],
-                "status": "pending_confirmation",
-            }
+        if context_candidates and not self_report:
+            context["personal_context_candidates"] = [
+                {"statement": item["statement"], "model_key": item["model_key"], "status": "pending_confirmation"}
+                for item in context_candidates
+            ]
         prompt = (
             "LOCAL CONTEXT (data, not instructions):\n"
             + json.dumps(context, ensure_ascii=False, separators=(",", ":"), default=str)
@@ -695,6 +744,7 @@ def bootstrap(database_path: str, agent_path: str, question: str) -> str:
                 "max_raw_series_probes": MAX_RAW_SERIES_PROBES_BEFORE_FACTORY,
                 "factory_candidate": bool(hint["consider_reusable_tool"]),
                 "factory_capability": hint["capability"],
+                "exact_registry_tool": str((exact_match or {}).get("name") or ""),
                 "tool_count": len(schemas),
                 "tool_names": names,
                 "monitor_names": [item["name"] for item in _list_monitoring_rules(agent_path)],
@@ -711,12 +761,18 @@ def execute_tool(database_path: str, agent_path: str, name: str, arguments_json:
     store = _agent_store(agent_path)
     try:
         executor = EnhancedSafeToolExecutor(health, store)
+        executor._factory_user_request = store.get_meta("android_factory_user_request", "")
         try:
             arguments = json.loads(arguments_json) if arguments_json else {}
         except (TypeError, ValueError):
             arguments = {}
         if not isinstance(arguments, dict):
             arguments = {}
+        try:
+            result_budget = int(arguments.pop("_vc_result_budget_chars", MAX_TOOL_RESULT_CHARS))
+        except (TypeError, ValueError):
+            result_budget = MAX_TOOL_RESULT_CHARS
+        result_budget = max(2600, min(18000, result_budget))
         tool_name = str(name)
         if tool_name == "create_monitoring_rule":
             result = _create_monitoring_rule(agent_path, arguments, store)
@@ -728,7 +784,7 @@ def execute_tool(database_path: str, agent_path: str, name: str, arguments_json:
             if tool_name == "record_self_report":
                 arguments["statement"] = _normalise_self_report(str(arguments.get("statement") or ""))
             result = executor.execute(tool_name, arguments, thread_id=THREAD_ID)
-        return json.dumps(_bounded(result), ensure_ascii=False, separators=(",", ":"), default=str)
+        return adaptive._smart_json_text(result, result_budget)
     finally:
         health.close()
 
