@@ -13,6 +13,15 @@ data class PersonalAgentRunResult(
     val recordConversation: Boolean = true,
 )
 
+private data class AgentBudget(
+    val contextTokens: Int,
+    val actionTokens: Int,
+    val finalTokens: Int,
+    val toolResultChars: Int,
+    val ledgerChars: Int,
+    val evidenceEntries: Int,
+)
+
 class PersonalAgentController(
     private val core: PythonCore,
     private val nano: GeminiNanoEngine,
@@ -56,12 +65,12 @@ class PersonalAgentController(
         val toolCount = bootstrap.optInt("tool_count", 0)
         val factoryCandidate = bootstrap.optBoolean("factory_candidate", false)
         val factoryCapability = bootstrap.optString("factory_capability", "analysis.composed")
+        val exactRegistryTool = bootstrap.optString("exact_registry_tool").trim()
         val maxFactoryRepairs = bootstrap.optInt("max_factory_repairs", 3).coerceIn(1, 4)
         val maxRawSeriesProbes = bootstrap.optInt("max_raw_series_probes", 2).coerceIn(1, 4)
         val advertisedTools = jsonStrings(bootstrap.optJSONArray("tool_names"))
         val activeMonitors = jsonStrings(bootstrap.optJSONArray("monitor_names"))
         var nanoAvailabilityFailure: Throwable? = null
-
         suspend fun ollamaRun(): PersonalAgentRunResult? {
             val file = installedModel ?: return null
             return try {
@@ -74,10 +83,13 @@ class PersonalAgentController(
                     engineLabel = "${selectedModel.id} · personal agent",
                     factoryCandidate = factoryCandidate,
                     factoryCapability = factoryCapability,
+                    exactRegistryTool = exactRegistryTool,
                     maxFactoryRepairs = maxFactoryRepairs,
                     maxRawSeriesProbes = maxRawSeriesProbes,
                     advertisedTools = advertisedTools,
                     activeMonitors = activeMonitors,
+                    budget = agentBudget(AiEngine.OLLAMA_LOCAL, selectedModel, initialPrompt.length),
+                    replayInitialContext = false,
                     onStage = onStage,
                 ) { prompt, tokens -> ollama.personalAgentTurn(prompt, tokens, onStage) }
             } catch (e: CancellationException) {
@@ -96,10 +108,13 @@ class PersonalAgentController(
                 engineLabel = "Gemini Nano · personal agent",
                 factoryCandidate = factoryCandidate,
                 factoryCapability = factoryCapability,
+                exactRegistryTool = exactRegistryTool,
                 maxFactoryRepairs = maxFactoryRepairs,
                 maxRawSeriesProbes = maxRawSeriesProbes,
                 advertisedTools = advertisedTools,
                 activeMonitors = activeMonitors,
+                budget = agentBudget(AiEngine.GEMINI_NANO, selectedModel, initialPrompt.length),
+                replayInitialContext = true,
                 onStage = onStage,
             ) { prompt, tokens -> nano.personalAgentTurn(system, prompt, tokens, onStage) }
         } catch (e: CancellationException) {
@@ -148,30 +163,35 @@ class PersonalAgentController(
         engineLabel: String,
         factoryCandidate: Boolean,
         factoryCapability: String,
+        exactRegistryTool: String,
         maxFactoryRepairs: Int,
         maxRawSeriesProbes: Int,
         advertisedTools: Set<String>,
         activeMonitors: Set<String>,
+        budget: AgentBudget,
+        replayInitialContext: Boolean,
         onStage: (String) -> Unit,
         turn: suspend (String, Int) -> String,
     ): PersonalAgentRunResult? {
-        var transcript = initialPrompt
+        var transcript = if (exactRegistryTool.isBlank()) initialPrompt else {
+            "$initialPrompt\n\nRUNTIME EXACT TOOL REUSE: call $exactRegistryTool now; do not create a duplicate."
+        }
         val evidenceLedger = mutableListOf<String>()
         val used = mutableListOf<String>()
         val knownTools = advertisedTools.toMutableSet()
         val cache = mutableMapOf<String, String>()
         var factoryRepairs = 0
         var rawSeriesProbes = 0
-        var factoryResolved = false
+        var factoryResolved = exactRegistryTool.isNotBlank()
         var factoryGate = false
-        var factoryToolName: String? = null
+        var factoryToolName: String? = exactRegistryTool.ifBlank { null }
         var factoryToolExecuted = false
         val knownMonitors = activeMonitors.toMutableSet()
         var monitoringOutcome: JSONObject? = null
 
         repeat(maxSteps) { index ->
             onStage("Personal agent · step ${index + 1}/$maxSteps")
-            val raw = turn(transcript, ACTION_OUTPUT_TOKENS)
+            val raw = turn(transcript, budget.actionTokens)
             val action = parseAction(raw) ?: return null
             when (action.optString("action")) {
                 "final" -> {
@@ -180,12 +200,16 @@ class PersonalAgentController(
                             initialPrompt,
                             evidenceLedger,
                             "Resolve the reusable capability gap with create_learned_tool. Capability: $factoryCapability",
+                            budget,
+                            replayInitialContext,
                         )
                     } else if (factoryToolName != null && !factoryToolExecuted) {
                         transcript = buildStepPrompt(
                             initialPrompt,
                             evidenceLedger,
                             "Execute ${factoryToolName} with the current inputs before answering.",
+                            budget,
+                            replayInitialContext,
                         )
                     } else {
                         val answer = action.optString("answer").trim()
@@ -208,6 +232,8 @@ class PersonalAgentController(
                             initialPrompt,
                             evidenceLedger,
                             "Only create_learned_tool is allowed now; do not probe another raw metric.",
+                            budget,
+                            replayInitialContext,
                         )
                         return@repeat
                     }
@@ -217,6 +243,8 @@ class PersonalAgentController(
                             initialPrompt,
                             evidenceLedger,
                             "'$name' is unavailable. Use only advertised tools or a tool created in this session.",
+                            budget,
+                            replayInitialContext,
                         )
                         return@repeat
                     }
@@ -247,12 +275,14 @@ class PersonalAgentController(
 
                     val cacheKey = "$name:${arguments}"
                     val cacheable = name !in MUTATING_AGENT_TOOLS
+                    val bridgeArguments = JSONObject(arguments.toString())
+                        .put("_vc_result_budget_chars", budget.toolResultChars)
                     val result = syntheticResult
                         ?: if (cacheable && cache.containsKey(cacheKey)) {
                             cache.getValue(cacheKey)
                         } else {
                             core.executePersonalAgentTool(
-                                databasePath, agentDatabasePath, name, arguments.toString()
+                                databasePath, agentDatabasePath, name, bridgeArguments.toString()
                             ).also { if (cacheable) cache[cacheKey] = it }
                         }
                     used += name
@@ -261,7 +291,7 @@ class PersonalAgentController(
                     if (name == "create_learned_tool") {
                         val resultObject = runCatching { JSONObject(result) }.getOrNull()
                         when (resultObject?.optString("status")) {
-                            "invalid_pipeline", "invalid_spec" -> {
+                            "invalid_pipeline", "invalid_spec", "invalid_metadata" -> {
                                 factoryRepairs += 1
                                 val error = resultObject.optString("error", "Learned-tool validation failed")
                                 onStage("Tool Factory · repair $factoryRepairs/$maxFactoryRepairs · $error")
@@ -309,7 +339,7 @@ class PersonalAgentController(
                         }
                     }
 
-                    addEvidence(evidenceLedger, name, arguments, result)
+                    addEvidence(evidenceLedger, name, arguments, result, budget)
                     if (factoryCandidate && !factoryResolved && factoryRepairs < maxFactoryRepairs && index + 1 >= FACTORY_GATE_AFTER_STEPS) {
                         factoryGate = true
                     }
@@ -320,7 +350,9 @@ class PersonalAgentController(
                             "Call create_learned_tool now to resolve capability $factoryCapability."
                         else -> "Choose the next necessary action; do not repeat completed calls."
                     }
-                    transcript = buildStepPrompt(initialPrompt, evidenceLedger, nextDirective)
+                    transcript = buildStepPrompt(
+                        initialPrompt, evidenceLedger, nextDirective, budget, replayInitialContext
+                    )
                 }
 
                 else -> return null
@@ -333,8 +365,10 @@ class PersonalAgentController(
             evidenceLedger,
             "FINAL ANSWER NOW; no tools. Return {\"action\":\"final\",\"answer\":\"...\"}. " +
                 "Answer result-first; mention only material values and limitations, without narrating tool use.",
+            budget,
+            replayInitialContext,
         )
-        val raw = turn(finalPrompt, FINAL_OUTPUT_TOKENS)
+        val raw = turn(finalPrompt, budget.finalTokens)
         val action = parseAction(raw)
         val answer = action?.takeIf { it.optString("action") == "final" }
             ?.optString("answer")?.trim().orEmpty()
@@ -409,6 +443,7 @@ class PersonalAgentController(
         tool: String,
         arguments: JSONObject,
         result: String,
+        budget: AgentBudget,
     ) {
         val resultValue = runCatching<Any> { JSONObject(result) }.getOrElse {
             runCatching<Any> { JSONArray(result) }.getOrElse { result }
@@ -418,34 +453,41 @@ class PersonalAgentController(
             .put("arguments", arguments)
             .put("result", resultValue)
             .toString()
-        if (entry.length > MAX_EVIDENCE_ENTRY_CHARS) {
+        val entryLimit = (budget.toolResultChars / 2).coerceIn(1_800, 18_000)
+        if (entry.length > entryLimit) {
             entry = JSONObject()
                 .put("tool", tool)
                 .put("arguments", arguments)
-                .put("result_preview", result.take(MAX_EVIDENCE_ENTRY_CHARS - 700))
+                .put("result_preview", result.take((entryLimit - 700).coerceAtLeast(800)))
                 .put("bounded", true)
                 .toString()
         }
         ledger += entry
-        while (ledger.size > MAX_EVIDENCE_ENTRIES) ledger.removeAt(0)
+        while (ledger.size > budget.evidenceEntries) ledger.removeAt(0)
     }
 
     private fun buildStepPrompt(
         initialPrompt: String,
         ledger: List<String>,
         directive: String,
+        budget: AgentBudget,
+        replayInitialContext: Boolean,
     ): String {
         val selected = mutableListOf<String>()
         var usedChars = 0
         for (entry in ledger.asReversed()) {
-            if (selected.isNotEmpty() && usedChars + entry.length > MAX_EVIDENCE_LEDGER_CHARS) break
+            if (selected.isNotEmpty() && usedChars + entry.length > budget.ledgerChars) break
             selected.add(0, entry)
             usedChars += entry.length
         }
         val omitted = ledger.size - selected.size
         val evidence = if (selected.isEmpty()) "[]" else selected.joinToString(",", "[", "]")
         return buildString {
-            append(initialPrompt)
+            if (replayInitialContext) {
+                append(initialPrompt)
+            } else {
+                append("CONTINUE THE CURRENT AGENT RUN. The original question and tool schemas are already in this local model session.")
+            }
             append("\n\nDETERMINISTIC EVIDENCE LEDGER (compact; omitted values are unknown):\n")
             append(evidence)
             if (omitted > 0) append("\nOlder evidence entries omitted: ").append(omitted)
@@ -465,6 +507,36 @@ class PersonalAgentController(
             return runCatching { JSONObject(cleaned.substring(start, end + 1)) }.getOrNull()
         }
         return null
+    }
+
+    private fun agentBudget(
+        engine: AiEngine,
+        model: OllamaModelSpec,
+        promptChars: Int,
+    ): AgentBudget {
+        val context = when {
+            engine == AiEngine.GEMINI_NANO -> 8_192
+            model.parameterCount in setOf("0.6B", "1.7B") -> 8_192
+            model.parameterCount == "4B" -> 16_384
+            else -> 32_768
+        }
+        val action = when {
+            context <= 8_192 -> 640
+            context <= 16_384 -> 1_200
+            else -> 2_200
+        }
+        val final = when {
+            context <= 8_192 -> 1_600
+            context <= 16_384 -> 2_200
+            else -> 2_800
+        }
+        val estimatedInput = kotlin.math.ceil(promptChars / 3.5).toInt() + 192
+        val reserve = maxOf(action + 512, (context * 0.18).toInt())
+        val freeTokens = (context - estimatedInput - reserve).coerceAtLeast(256)
+        val toolChars = (freeTokens * 0.38 * 4).toInt().coerceIn(2_600, 18_000)
+        val ledgerChars = (freeTokens * 0.48 * 4).toInt().coerceIn(4_400, 24_000)
+        val entries = if (context <= 8_192) 5 else if (context <= 16_384) 6 else 8
+        return AgentBudget(context, action, final, toolChars, ledgerChars, entries)
     }
 
     private fun jsonStrings(array: JSONArray?): Set<String> = buildSet {
@@ -501,11 +573,6 @@ class PersonalAgentController(
     }
 
     companion object {
-        private const val ACTION_OUTPUT_TOKENS = 1400
-        private const val FINAL_OUTPUT_TOKENS = 2400
-        private const val MAX_EVIDENCE_ENTRIES = 8
-        private const val MAX_EVIDENCE_ENTRY_CHARS = 5_000
-        private const val MAX_EVIDENCE_LEDGER_CHARS = 18_000
         private const val FACTORY_GATE_AFTER_STEPS = 3
 
         private val NANO_AVAILABILITY_MARKERS = setOf(

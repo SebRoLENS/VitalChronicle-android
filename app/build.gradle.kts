@@ -17,9 +17,9 @@ android {
         applicationId = "io.github.sebrolens.vitalchronicle.android"
         minSdk = 26
         targetSdk = 36
-        // 0.8.1 publishes verified recurring personal monitoring.
-        versionCode = 31
-        versionName = "0.8.1"
+        // 0.8.2 aligns Android with the adaptive desktop personal-agent runtime.
+        versionCode = 32
+        versionName = "0.8.2"
         ndk {
             abiFilters += listOf("arm64-v8a")
         }
