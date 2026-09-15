@@ -58,7 +58,7 @@ def main() -> None:
         bootstrap = json.loads(agent.bootstrap(str(health), str(state), "How active have I been?"))
         assert bootstrap["max_steps"] == 15
         assert bootstrap["max_factory_repairs"] == 3
-        assert bootstrap["tool_count"] <= 14
+        assert bootstrap["tool_count"] <= 10
         assert bootstrap["history_count"] == 0
         assert "get_data_coverage" in bootstrap["prompt"]
         assert "calculate_cardio_load" in bootstrap["prompt"]
@@ -90,7 +90,31 @@ def main() -> None:
         assert learned_context[0]["statement"] == (
             "Di solito mi alleno in bicicletta cinque giorni a settimana"
         )
-        assert durable_bootstrap["tool_count"] <= 14
+        assert durable_bootstrap["tool_count"] <= 10
+
+        hard_state = root / "hard_context.sqlite3"
+        hard_question = (
+            "Di solito mi alleno 3-4 volte a settimana, soprattutto la mattina. "
+            "Normalmente vado a letto verso mezzanotte e mi sveglio verso le 7:30. "
+            "Nei giorni in cui mi alleno per due giorni consecutivi, voglio capire se dopo il "
+            "secondo allenamento HRV e frequenza cardiaca a riposo recuperano più lentamente "
+            "quando la notte successiva dormo almeno il 15% meno della mia mediana personale "
+            "rispetto a quando dormo almeno quanto la mia mediana. Considera gli ultimi 90 giorni."
+        )
+        hard_bootstrap = json.loads(agent.bootstrap(str(health), str(hard_state), hard_question))
+        hard_db = sqlite3.connect(hard_state)
+        pending_contexts = hard_db.execute(
+            "SELECT context_json FROM feedback WHERE answered_at IS NULL "
+            "AND context_json LIKE '%durable_context_confirmation%'"
+        ).fetchall()
+        hard_db.close()
+        hard_keys = {json.loads(row[0])["model_key"] for row in pending_contexts}
+        assert {"training_routine_context", "sleep_schedule_context"}.issubset(hard_keys)
+        assert hard_bootstrap["factory_capability"] == (
+            "analysis.composed.training_context.sleep_conditioned_return_comparison"
+        )
+        assert "compare_sleep_conditioned_consecutive_training_recovery" in hard_bootstrap["tool_names"]
+        assert hard_bootstrap["tool_count"] <= 10
 
         agent.record_exchange(str(state), "How active have I been?", "You recorded 5,000 steps in the available sample.")
         follow_up = json.loads(agent.bootstrap(str(health), str(state), "And compared with before?"))
@@ -115,8 +139,9 @@ def main() -> None:
         seventeen_days = [{"date": f"2026-09-{day:02d}", "value": day} for day in range(1, 18)]
         compact_result = agent._bounded({"series": seventeen_days})
         assert len(compact_result["series"]) == 17
-        long_result = agent._bounded({"series": list(range(100))})
-        assert any(isinstance(item, dict) and item.get("omitted_items") for item in long_result["series"])
+        long_result = agent._bounded({"series": list(range(5000))}, 1200)
+        assert long_result["_context_truncation"]["truncated"] is True
+        assert json.loads(json.dumps(long_result)) == long_result
 
         complex_request = json.loads(agent.bootstrap(
             str(health), str(state),
@@ -124,6 +149,39 @@ def main() -> None:
         ))
         assert complex_request["factory_candidate"] is True
         assert complex_request["factory_capability"].startswith("analysis.composed")
+        assert "analyze_metric_threshold_responses" in complex_request["tool_names"]
+
+        invalid_metadata = json.loads(agent.execute_tool(
+            str(health), str(state), "create_learned_tool",
+            json.dumps({
+                "name": "analisi_personale",
+                "description": "Analisi dei dati personali",
+                "capability": "analysis.composed.test_personale",
+                "pipeline": [{"op": "return", "source": "missing"}],
+            }),
+        ))
+        assert invalid_metadata["status"] == "invalid_metadata"
+        assert invalid_metadata["repairable"] is True
+
+        exact_state = root / "exact_reuse.sqlite3"
+        exact_store = agent._agent_store(str(exact_state))
+        exact_capability = complex_request["factory_capability"]
+        exact_store.add_learned_tool({
+            "name": "exact_threshold_response",
+            "description": "Exact personal baseline threshold response analysis",
+            "capability": exact_capability,
+            "parameters": {"type": "object", "properties": {}},
+            "pipeline": [
+                {"op": "call_tool", "tool": "get_available_metrics", "arguments": {}, "as": "result"},
+                {"op": "return", "source": "result"},
+            ],
+        })
+        exact_bootstrap = json.loads(agent.bootstrap(
+            str(health), str(exact_state),
+            "How often do days 30% above my personal activity baseline affect the next day?",
+        ))
+        assert exact_bootstrap["exact_registry_tool"] == "exact_threshold_response"
+        assert "exact_threshold_response" in exact_bootstrap["tool_names"]
 
         monitoring_state = root / "monitoring.sqlite3"
         monitor_bootstrap = json.loads(agent.bootstrap(
@@ -226,7 +284,15 @@ def main() -> None:
         reset = json.loads(agent.reset_personalisation(str(health), str(state)))
         assert reset["associations"] == 0
         assert reset["learned_tools"] == 0
-        assert reset["built_in_tools"] >= 40
+        assert reset["built_in_tools"] >= 44
+
+        controller = Path(
+            "app/src/main/java/io/github/sebrolens/vitalchronicle/android/PersonalAgentController.kt"
+        ).read_text(encoding="utf-8")
+        assert "context <= 8_192 -> 640" in controller
+        assert "_vc_result_budget_chars" in controller
+        assert "replayInitialContext = false" in controller
+        assert '"invalid_metadata"' in controller
         # Personalisation reset intentionally keeps dialogue history, like desktop.
         assert len(reset["recent_conversation"]) == 2
         cleared = json.loads(agent.clear_conversation(str(state)))
