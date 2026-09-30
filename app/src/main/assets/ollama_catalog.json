@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-29T10:52:37.500166+00:00",
+  "generatedAt": "2026-09-30T10:41:59.647645+00:00",
   "source": "https://ollama.com/library",
   "models": [
     {
@@ -45,21 +45,9 @@
       "tag": "e2b",
       "displayName": "Gemma 4 \u00b7 E2B",
       "parameterCount": "E2B",
-      "downloadBytes": 7162394016,
-      "sha256": "4e30e2665218745ef463f722c0bf86be0cab6ee676320f1cfadf91e989107448",
-      "minimumRamGb": 14,
-      "supportsThinking": true,
-      "catalogRank": 1600
-    },
-    {
-      "id": "gemma4:12b",
-      "family": "gemma4",
-      "tag": "12b",
-      "displayName": "Gemma 4 \u00b7 12B",
-      "parameterCount": "12B",
-      "downloadBytes": 7381382048,
-      "sha256": "1278394b693672ac2799eadc9a83fd98259a6a88a40acfb1dcaa6c6fc895a606",
-      "minimumRamGb": 14,
+      "downloadBytes": 3502493472,
+      "sha256": "6dd7ac24fe13a238898e16e253ebc7a72fa27fb83f2658c2f6c241df3af5937d",
+      "minimumRamGb": 8,
       "supportsThinking": true,
       "catalogRank": 1600
     },
@@ -69,9 +57,21 @@
       "tag": "e4b",
       "displayName": "Gemma 4 \u00b7 E4B",
       "parameterCount": "E4B",
-      "downloadBytes": 9608338848,
-      "sha256": "4c27e0f5b5adf02ac956c7322bd2ee7636fe3f45a8512c9aba5385242cb6e09a",
-      "minimumRamGb": 18,
+      "downloadBytes": 5493439296,
+      "sha256": "370c2879f17648d337b0ab4e208fdce348e24d1060064e93d7645daafd56d39c",
+      "minimumRamGb": 10,
+      "supportsThinking": true,
+      "catalogRank": 1600
+    },
+    {
+      "id": "gemma4:12b",
+      "family": "gemma4",
+      "tag": "12b",
+      "displayName": "Gemma 4 \u00b7 12B",
+      "parameterCount": "12B",
+      "downloadBytes": 7381383680,
+      "sha256": "bb722270d54346adc198f213851dbe0207e87c3ecf2a0aff4d92262726215391",
+      "minimumRamGb": 14,
       "supportsThinking": true,
       "catalogRank": 1600
     },
@@ -81,8 +81,8 @@
       "tag": "26b",
       "displayName": "Gemma 4 \u00b7 26B",
       "parameterCount": "26B",
-      "downloadBytes": 16947541728,
-      "sha256": "dfd98d2734212d0c128e128e5d88edac764aaa4f4af2f4c196941f2354aab8da",
+      "downloadBytes": 17074419072,
+      "sha256": "a8bdd07a49b895083bb1420bb895ad9ab3e3b8f7d5cc42c7582ca0fa765eede2",
       "minimumRamGb": 24,
       "supportsThinking": true,
       "catalogRank": 1600
@@ -93,8 +93,8 @@
       "tag": "31b",
       "displayName": "Gemma 4 \u00b7 31B",
       "parameterCount": "31B",
-      "downloadBytes": 19868969920,
-      "sha256": "280af6832eca23cb322c4dcc65edfea98a21b8f8ab07dc7553bd6f7e6e7a3313",
+      "downloadBytes": 18670033120,
+      "sha256": "cd20f2b3f2e30239023189c04e65754b0cc7c38959665ac727461ee470df16cf",
       "minimumRamGb": 24,
       "supportsThinking": true,
       "catalogRank": 1600
