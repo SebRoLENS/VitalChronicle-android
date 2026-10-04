@@ -1,5 +1,14 @@
 # VitalChronicle Android
 
+> [!CAUTION]
+> **Manual tester approval required**
+>
+> The Android app is still in an early testing phase. Google accounts must currently be **added manually to the test-user list** before they can sign in.
+>
+> To request access, email **[sebastiano.romi@gmail.com](mailto:sebastiano.romi@gmail.com)** and include the **Google account email address you will use in the app**. Wait for confirmation before signing in.
+>
+> If you install the official APK, **you do not need to create your own Android OAuth client**. An `Error 403: access_denied` message stating that the app is available only to developer-approved testers means your account has not yet been approved.
+
 [![Download latest APK](https://img.shields.io/badge/Download-latest%20APK-3DDC84?logo=android&logoColor=white)](https://github.com/SebRoLENS/VitalChronicle-android/releases/latest/download/VitalChronicle-Android.apk)
 
 Native Android implementation of [VitalChronicle](https://github.com/SebRoLENS/VitalChronicle).
@@ -24,15 +33,23 @@ This keeps the scientific/data interpretation layer synchronized between desktop
 
 Android uses **Google Identity Services / `AuthorizationClient`** for client-side OAuth access. It does not embed a Google OAuth client secret, open a browser loopback callback, or run a localhost OAuth server.
 
-Before connecting an account, configure an **Android OAuth client** in the same Google Cloud project used for the Google Health API:
+### Official release APK
+
+The official APK uses the project's existing Android OAuth client. Follow the tester-access notice at the top of this README: contact **[sebastiano.romi@gmail.com](mailto:sebastiano.romi@gmail.com)** with the Google account email address you intend to use, wait for confirmation that it has been added as a test user, then connect that account in the app.
+
+Do not register the official APK's package name and signing-certificate fingerprint in a separate Google Cloud project. That combination is already registered, and Google may reject it as already in use.
+
+### Developer builds
+
+If you build and sign the app yourself, configure an **Android OAuth client** in the Google Cloud project you use for the Google Health API:
 
 1. In Google Cloud Console open **APIs & Services → Credentials → Create credentials → OAuth client ID**.
 2. Choose **Android**.
 3. Register package name `io.github.sebrolens.vitalchronicle.android`.
-4. Register the SHA-1 signing-certificate fingerprint shown directly in **VitalChronicle → Settings → Google Health**.
-5. If the OAuth consent screen is still in testing, keep the Google account you use in the configured test users.
+4. Register the SHA-1 signing-certificate fingerprint shown directly in **VitalChronicle → Settings → Google Health** for your own signed build.
+5. If your OAuth consent screen is in testing, add the Google account you use to that project's test users.
 
-Android Studio debug builds and production/release builds normally use different signing certificates. Create an Android OAuth client entry for every SHA-1 certificate used to sign an installed build. The app deliberately displays its actual runtime SHA-1 to make emulator/device setup unambiguous.
+Android Studio debug builds and your own release builds normally use different signing certificates. Register each package-name/SHA-1 combination you use in your own project. The app displays its actual runtime SHA-1 to make emulator/device setup unambiguous.
 
 ## AI privacy
 
