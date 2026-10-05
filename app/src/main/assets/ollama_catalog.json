@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-04T10:44:09.979399+00:00",
+  "generatedAt": "2026-10-05T11:47:58.266074+00:00",
   "source": "https://ollama.com/library",
   "models": [
     {
@@ -105,9 +105,9 @@
       "tag": "latest",
       "displayName": "Qwen 3.5 \u00b7 latest",
       "parameterCount": "Unknown",
-      "downloadBytes": 6594462816,
-      "sha256": "dec52a44569a2a25341c4e4d3fee25846eed4f6f0b936278e3a3c900bb99d37c",
-      "minimumRamGb": 14,
+      "downloadBytes": 5629109120,
+      "sha256": "02d45dc1cf451ba2475ac33b301c2dd8f985abe4c182ce04a1f2f5bf0260278d",
+      "minimumRamGb": 10,
       "supportsThinking": true,
       "catalogRank": 1550
     },
