@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-08T11:34:53.964090+00:00",
+  "generatedAt": "2026-10-09T11:29:20.151972+00:00",
   "source": "https://ollama.com/library",
   "models": [
     {
@@ -249,8 +249,8 @@
       "tag": "1b",
       "displayName": "Gemma 3 \u00b7 1B",
       "parameterCount": "1B",
-      "downloadBytes": 815310432,
-      "sha256": "7cd4618c1faf8b7233c6c906dac1694b6a47684b37b8895d470ac688520b9c01",
+      "downloadBytes": 806058400,
+      "sha256": "2f8c3d137f2496dcb4019e17a50f2974b89c1be1a742db3c80cc86f91cafeeef",
       "minimumRamGb": 4,
       "supportsThinking": false,
       "catalogRank": 700
@@ -261,8 +261,8 @@
       "tag": "4b",
       "displayName": "Gemma 3 \u00b7 4B",
       "parameterCount": "4B",
-      "downloadBytes": 3338792448,
-      "sha256": "aeda25e63ebd698fab8638ffb778e68bed908b960d39d0becc650fa981609d25",
+      "downloadBytes": 2499012288,
+      "sha256": "f06e91e18fc74295d0c781bf91622508c75655e2c18ed869d52447ffe1e667e1",
       "minimumRamGb": 8,
       "supportsThinking": false,
       "catalogRank": 700
@@ -273,8 +273,8 @@
       "tag": "12b",
       "displayName": "Gemma 3 \u00b7 12B",
       "parameterCount": "12B",
-      "downloadBytes": 8149180896,
-      "sha256": "e8ad13eff07a78d89926e9e8b882317d082ef5bf9768ad7b50fcdbbcd63748de",
+      "downloadBytes": 7309830496,
+      "sha256": "13576eb6dd8d9d04b4da04d015ff343968628d3c2984195569d9d3585651d4f1",
       "minimumRamGb": 14,
       "supportsThinking": false,
       "catalogRank": 700
