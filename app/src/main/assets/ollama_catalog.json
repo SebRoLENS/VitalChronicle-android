@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-09T11:29:20.151972+00:00",
+  "generatedAt": "2026-10-10T10:46:51.133281+00:00",
   "source": "https://ollama.com/library",
   "models": [
     {
@@ -285,8 +285,8 @@
       "tag": "27b",
       "displayName": "Gemma 3 \u00b7 27B",
       "parameterCount": "27B",
-      "downloadBytes": 17396927584,
-      "sha256": "e796792eba26c4d3b04b0ac5adb01a453dd9ec2dfd83b6c59cbf6fe5f30b0f68",
+      "downloadBytes": 16555661472,
+      "sha256": "3eb75691d2db8bb04109c517466bb10bc0e4f035227d1a46cbba2f1d8e6afa45",
       "minimumRamGb": 24,
       "supportsThinking": false,
       "catalogRank": 700
